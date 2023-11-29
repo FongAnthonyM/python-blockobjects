@@ -6,8 +6,8 @@ Reference
     :backlinks: none
 
 
-templatepackage.__main__
+blockobjects.__main__
 --------------------
 
-.. automodule:: templatepackage.__main__
+.. automodule:: blockobjects.__main__
    :members:

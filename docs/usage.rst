@@ -1,6 +1,6 @@
 Usage
 =====
 
-.. click:: templatepackage.__main__:main
-   :prog: python-templatepackage
+.. click:: blockobjects.__main__:main
+   :prog: python-blockobjects
    :nested: full

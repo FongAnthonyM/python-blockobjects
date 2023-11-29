@@ -1,4 +1,4 @@
-templatepackage
+blockobjects
 ============
 
 |PyPI| |Status| |Python Version| |License|
@@ -7,26 +7,26 @@ templatepackage
 
 |pre-commit| |Black|
 
-.. |PyPI| image:: https://img.shields.io/pypi/v/templatepackage.svg
-   :target: https://pypi.org/project/templatepackage/
+.. |PyPI| image:: https://img.shields.io/pypi/v/blockobjects.svg
+   :target: https://pypi.org/project/blockobjects/
    :alt: PyPI
-.. |Status| image:: https://img.shields.io/pypi/status/templatepackage.svg
-   :target: https://pypi.org/project/templatepackage/
+.. |Status| image:: https://img.shields.io/pypi/status/blockobjects.svg
+   :target: https://pypi.org/project/blockobjects/
    :alt: Status
-.. |Python Version| image:: https://img.shields.io/pypi/pyversions/templatepackage
-   :target: https://pypi.org/project/templatepackage
+.. |Python Version| image:: https://img.shields.io/pypi/pyversions/blockobjects
+   :target: https://pypi.org/project/blockobjects
    :alt: Python Version
-.. |License| image:: https://img.shields.io/pypi/l/templatepackage
+.. |License| image:: https://img.shields.io/pypi/l/blockobjects
    :target: https://opensource.org/licenses/MIT
    :alt: License
-.. |Read the Docs| image:: https://img.shields.io/readthedocs/python-templatepackage/latest.svg?label=Read%20the%20Docs
-   :target: https://python-templatepackage.readthedocs.io/
-   :alt: Read the documentation at https://python-templatepackage.readthedocs.io/
-.. |Tests| image:: https://github.com/fongant/python-templatepackage/workflows/Tests/badge.svg
-   :target: https://github.com/fongant/templatepackage/actions?workflow=Tests
+.. |Read the Docs| image:: https://img.shields.io/readthedocs/python-blockobjects/latest.svg?label=Read%20the%20Docs
+   :target: https://python-blockobjects.readthedocs.io/
+   :alt: Read the documentation at https://python-blockobjects.readthedocs.io/
+.. |Tests| image:: https://github.com/fongant/python-blockobjects/workflows/Tests/badge.svg
+   :target: https://github.com/fongant/blockobjects/actions?workflow=Tests
    :alt: Tests
-.. |Codecov| image:: https://codecov.io/gh/fongant/python-templatepackage/branch/main/graph/badge.svg
-   :target: https://codecov.io/gh/fongant/python-templatepackage
+.. |Codecov| image:: https://codecov.io/gh/fongant/python-blockobjects/branch/main/graph/badge.svg
+   :target: https://codecov.io/gh/fongant/python-blockobjects
    :alt: Codecov
 .. |pre-commit| image:: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white
    :target: https://github.com/pre-commit/pre-commit
@@ -51,11 +51,11 @@ Requirements
 Installation
 ------------
 
-You can install *templatepackage* via pip_ from PyPI_:
+You can install *blockobjects* via pip_ from PyPI_:
 
 .. code:: console
 
-   $ pip install templatepackage
+   $ pip install blockobjects
 
 
 Usage
@@ -75,7 +75,7 @@ License
 -------
 
 Distributed under the terms of the `MIT license`_,
-*templatepackage* is free and open source software.
+*blockobjects* is free and open source software.
 
 
 Issues
@@ -95,8 +95,8 @@ This project was generated from `@cjolowicz`_'s `Hypermodern Python Cookiecutter
 .. _MIT license: https://opensource.org/licenses/MIT
 .. _PyPI: https://pypi.org/
 .. _Hypermodern Python Cookiecutter: https://github.com/cjolowicz/cookiecutter-hypermodern-python
-.. _file an issue: https://github.com/fongant/python-templatepackage/issues
+.. _file an issue: https://github.com/fongant/python-blockobjects/issues
 .. _pip: https://pip.pypa.io/
 .. github-only
 .. _Contributor Guide: CONTRIBUTING.rst
-.. _Usage: https://python-templatepackage.readthedocs.io/en/latest/usage.html
+.. _Usage: https://python-blockobjects.readthedocs.io/en/latest/usage.html
