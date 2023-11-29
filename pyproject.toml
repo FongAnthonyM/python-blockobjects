@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "blockobjects"
-version = "0.0.0"
+version = "0.1.0"
 description = "Basic object templates."
 authors = ["Anthony Fong <FongAnthonyM@gmail.com>"]
 license = "MIT"
@@ -19,7 +19,7 @@ classifiers = [
 Changelog = "https://github.com/fongant/python-blockobjects/releases"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
+python = ">=3.10,<4.0"
 click = ">=8.0.3"
 
 [tool.poetry.dev-dependencies]
