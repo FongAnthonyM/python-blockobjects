@@ -1,5 +1,5 @@
-""" provxyprocess.py
-A proxy for a Process which acts like a Process, but can run more than once.
+""" process.py
+A wrapper for a multiprocessing Process which mimics multiple run functionality.
 """
 # Package Header #
 from ...header import *
@@ -14,7 +14,8 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from asyncio import sleep
-from multiprocessing import Process, cpu_count
+from multiprocessing import Process as Process_
+from multiprocessing import cpu_count
 from time import perf_counter
 from typing import Any
 
@@ -22,17 +23,17 @@ from typing import Any
 from baseobjects import BaseObject, search_sentinel
 
 # Local Packages #
-from ..io import Interrupt
+from .synchronize import MultiProcessingInterrupt
 
 
 # Definitions #
 # Classes #
-class ProcessProxy(BaseObject):
-    """A proxy for a Process which acts like a Process, but can run more than once.
+class Process(BaseObject):
+    """A wrapper for a multiprocessing Process which mimics multiple run functionality.
 
-    ProcessProxy is a proxy for Process instance where the process target and specifications are held in ProcessProxy
-    then distributed to a new Process when the ProcessProxy is started. This way ProcessProxy runs the process target
-    multiple times by creating identical Processes and running them.
+    Process is a wrapper for multiprocessing Process instance where the process target and specifications are held in
+    this Process then distributed to a new multiprocessing Process when the Process is started. This way Process runs
+    the process target multiple times by creating identical multiprocessing Processes and running them.
 
     Class Attributes:
         CPU_COUNT: The number of CPUs this computer has.
@@ -77,9 +78,9 @@ class ProcessProxy(BaseObject):
         self.kwargs: dict[str, Any] = {}
         self.daemon: bool | None = None
 
-        self.join_interrupt: Interrupt | None = None
+        self.join_interrupt: MultiProcessingInterrupt | None = None
 
-        self.process: Process | None = None
+        self.process: Process_ | None = None
         self.previous_processes: list[Process] = []
 
         # Parent Attributes #
@@ -189,7 +190,7 @@ class ProcessProxy(BaseObject):
         target = self.target or self.run
         name = None if self.name is None else self.name.join(f"_proxy{len(self.previous_processes)}")
 
-        self.process = Process(target=target, name=name, args=self.args, kwargs=self.kwargs, daemon=self.daemon)
+        self.process = Process_(target=target, name=name, args=self.args, kwargs=self.kwargs, daemon=self.daemon)
 
     def create_process(
         self,
@@ -274,7 +275,7 @@ class ProcessProxy(BaseObject):
         self,
         timeout: float | None = None,
         interval: float = 0.0,
-        interrupt: Interrupt | None = None,
+        interrupt: MultiProcessingInterrupt | None = None,
     ) -> None:
         """Asynchronously, wait for the process to return/exit.
 
@@ -283,7 +284,7 @@ class ProcessProxy(BaseObject):
             interval: The time, in seconds, between each join check.
             interrupt: A interrupt which can be used to escape the loop.
         """
-        self.join_interrupt = interrupt or Interrupt()
+        self.join_interrupt = interrupt or MultiProcessingInterrupt()
         if timeout is None:
             while self.process.exitcode is None:
                 if self.join_interrupt.is_set():

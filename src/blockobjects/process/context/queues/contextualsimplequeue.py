@@ -36,7 +36,7 @@ class ContextualSimpleQueue(ContextualObject, QueueInterface):
         ctx: The context for the Python multiprocessing.
     """
 
-    ## Magic Methods #
+    # Magic Methods #
     # Construction/Destruction
     def __init__(self, *, context: BaseProcessContext | None = None, init: bool = True) -> None:
         # New Attributes #
@@ -55,12 +55,12 @@ class ContextualSimpleQueue(ContextualObject, QueueInterface):
         super().construct(context=context)
 
         if context is not None:
-            self.queue = self.context.create_queque()
+            self.queue = self.context.require_simple_queue(name=str(id(self)))
 
     # Context
     def set_context(self, context: BaseProcessContext) -> None:
         super().set_context(context=context)
-        new_queue = context.create_queue()
+        new_queue = context.require_simple_queue(name=str(id(self)))
         while not self.queue.empty():
             new_queue.put(self.queue.get())
         self.queue = new_queue

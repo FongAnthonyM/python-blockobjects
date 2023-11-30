@@ -75,12 +75,12 @@ class ContextualQueue(ContextualObject, QueueInterface):
         super().construct(context=context)
 
         if context is not None:
-            self.queue = self.context.create_queque(maxsize=maxsize, space_wait=space_wait)
+            self.queue = self.context.require_queue(name=str(id(self)), maxsize=maxsize, space_wait=space_wait)
 
     # Context
     def set_context(self, context: BaseProcessContext) -> None:
         super().set_context(context=context)
-        new_queue = context.create_queue()
+        new_queue = context.require_queue(name=str(id(self)))
         while not self.queue.empty():
             new_queue.put(self.queue.get())
         self.queue = new_queue

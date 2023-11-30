@@ -47,15 +47,22 @@ class ContextualEvent(ContextualObject, EventInterface):
         return self.event.is_set()
 
     # Instance Methods #
-    # Context #
+    # Constructors / Destructors
+    def construct(self, *, context: BaseProcessContext | None = None) -> None:
+        super().construct(context=context)
+
+        if context is not None:
+            self.event = self.context.require_event(name=str(id(self)))
+
+    # Context
     def set_context(self, context: BaseProcessContext) -> None:
         super().set_context(context=context)
-        new_event = context.create_event()
+        new_event = context.require_event(name=str(id(self)))
         if self.event:
             new_event.set()
         self.event = new_event
 
-    # Event #
+    # Event
     def is_set(self):
         return self.event.is_set
 

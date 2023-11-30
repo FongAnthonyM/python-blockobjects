@@ -49,15 +49,22 @@ class ContextualLock(ContextualObject, LockInterface):
             self.construct(context=context)
 
     # Instance Methods #
-    # Context #
+    # Constructors / Destructors
+    def construct(self, *, context: BaseProcessContext | None = None) -> None:
+        super().construct(context=context)
+
+        if context is not None:
+            self.lock = self.context.require_lock(name=str(id(self)))
+
+    # Context
     def set_context(self, context: BaseProcessContext) -> None:
         super().set_context(context=context)
         old_lock = self.lock
         old_lock.aquire()
-        self.lock = context.create_lock()
+        self.lock = context.require_lock(name=str(id(self)))
         old_lock.release()
 
-    # Lock #
+    # Lock
     def acquire(self, block: bool = True, timeout: float | None = None) -> bool:
         """Acquires the Lock, waits for the lock if block is True.
 
