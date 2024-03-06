@@ -1,4 +1,4 @@
-""" lock.py
+""" multiprocessingproxy.py
 
 """
 # Package Header #
@@ -13,17 +13,15 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from multiprocessing.managers import SharedMemoryManager
 
 # Third-Party Packages #
 
 # Local Packages #
-from ....process.context import BaseProcessingContext, DEFAULT_PROCESS_CONTEXT
-from ....process.context.synchronize import ContextualLock
+from ...context import ProxyInterface
 
 
 # Definitions #
 # Classes #
-class Lock(ContextualLock):
-    """"""
-    default_context: BaseProcessingContext = DEFAULT_PROCESS_CONTEXT
-
+class MultiprocessingProxy(ProxyInterface):
+    pass

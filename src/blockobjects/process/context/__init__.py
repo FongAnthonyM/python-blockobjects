@@ -13,8 +13,9 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .baseprocesscontext import BaseProcessContext
-from .processcontext import ProcessContext, DEFAULT_PROCESS_CONTEXT
+from .baseprocessingcontext import BaseProcessingContext
+from .managercontext import ManagerContext, DEFAULT_PROCESS_CONTEXT
 from .contextualobject import ContextualObject
 from .synchronize import *
 from .queues import *
+from .proxies import *

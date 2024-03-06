@@ -1,4 +1,4 @@
-""" remoteexecutor.py.py
+""" multiprocessingexecutor.py.py
 
 """
 # Package Header #
@@ -13,16 +13,17 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import run, Future, Task, create_task, iscoroutine
+from asyncio import run, Future, Task, create_task, iscoroutine, sleep
 from asyncio.events import AbstractEventLoop, _get_running_loop
 from typing import Any
 from warnings import warn
 
 # Third-Party Packages #
-from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
 from baseobjects import BaseObject
 
 # Local Packages #
+from ..context import ProxyInterface
+from .futures import PipeFuture
 from .synchronize import MultiProcessingEvent
 from .queues import MultiProcessingQueue
 from .process import Process
@@ -30,8 +31,8 @@ from .process import Process
 
 # Definitions #
 # Classes #
-class RemoteExecutor(BaseObject):
-    """
+class MultiProcessingProxy(ProxyInterface):
+    """An object to act as an execution interface to an object in an asynchronous loop or on a different process.
 
     Class Attributes:
 
@@ -40,34 +41,26 @@ class RemoteExecutor(BaseObject):
     Args:
 
     """
-    # Magic Methods #
-    # Construction/Destruction
-    def __init__(self,  init: bool = True) -> None:
-        # New Attributes #
-        self.name: str = ""
-        self._is_async: bool = True
-        self._is_process: bool = False
-        self.sets_up: bool = True
-        self.tears_down: bool = True
-        self.loop_event: MultiProcessingEvent = MultiProcessingEvent()
-        self._alive_event: MultiProcessingEvent = MultiProcessingEvent()
-        self.futures: list[Future] = []
+    # Attributes #
+    name: str = ""
+    _is_async: bool = True
+    _is_process: bool = False
+    event_loop: AbstractEventLoop | None = None
 
-        self.send_queue: MultiProcessingQueue = MultiProcessingQueue()
-        self.receive_queue: MultiProcessingQueue = MultiProcessingQueue()
+    sets_up: bool = True
+    tears_down: bool = True
+    loop_event: MultiProcessingEvent
+    _alive_event: MultiProcessingEvent
+    futures: list[Future]
 
-        self.object = Any
+    send_queue: MultiProcessingQueue
 
-        self.process: Process | None = Process()
-        self._daemon: bool | None = None
+    object: Any = None
 
-        # Parent Attributes #
-        super().__init__(init=False)
+    process: Process | None = None
+    _daemon: bool | None = None
 
-        # Object Construction #
-        if init:
-            self.construct()
-
+    # Properties #
     @property
     def is_process(self) -> bool:
         """bool: If this object will run in a separate process. It will detect if it is in a process while running.
@@ -86,10 +79,32 @@ class RemoteExecutor(BaseObject):
         else:
             self._is_process = value
 
-    @property
-    def async_event_loop(self) -> AbstractEventLoop | None:
-        """The async event loop if it is running otherwise None."""
-        return _get_running_loop()
+    # Magic Methods #
+    # Construction/Destruction
+    def __init__(
+        self,
+        obj: Any = None,
+        *,
+        loop: AbstractEventLoop | None = None,
+        init: bool = True,
+    ) -> None:
+        # Attributes #
+        self.event_loop = _get_running_loop()
+
+        self.loop_event = MultiProcessingEvent()
+        self._alive_event = MultiProcessingEvent()
+        self.futures = []
+
+        self.send_queue = MultiProcessingQueue()
+
+        self.process = Process()
+
+        # Parent Attributes #
+        super().__init__(init=False)
+
+        # Object Construction #
+        if init:
+            self.construct(obj=obj, loop=loop)
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -113,10 +128,22 @@ class RemoteExecutor(BaseObject):
 
     # Instance Methods #
     # Constructors/Destructors
-    def construct(self, ) -> None:
+    def construct(
+        self,
+        obj: Any = None,
+        *,
+        loop: AbstractEventLoop | None = None,
+        init: bool = True,
+    ) -> None:
+        if obj is not None:
+            self.object = obj
+
+        if loop is not None:
+            self.event_loop = loop
+
         super().construct()
 
-    # State Methods
+    # State
     def is_alive(self) -> bool:
         """Checks if this object is currently running.
 
@@ -141,29 +168,56 @@ class RemoteExecutor(BaseObject):
         """Creates a separate process for this task."""
         self.process = Process(name=self.name, daemon=self._daemon)
 
-    # Listening
-    def execute_remote(self, name, args=(), kwargs={}) -> Any:
-        self.send_queue.put((name, args, kwargs))
-        return self.receive_queue.get()
+    # Execution
+    async def execute_awaitable_future(self, awaitable: Any, future: PipeFuture) -> None:
+        future.set_result(await awaitable)
 
-    async def listen(self):
-        item = await self.send_queue.get_async()
-        if item is None:
-            return
+    async def execute_method(self, name, args=(), kwargs={}) -> Any:
+        # Get Method from Wrapped Object
+        method = getattr(self.object, name, None)
 
-        method = getattr(self.object, item[0], None)
-
+        # Check if the output is an attribute or a callable
         if callable(method):
+            # Try Executing Method
             try:
-                result = method(*item[1], **item[2])
+                result = method(*args, **kwargs)
             except Exception as e:
                 result = e
+
+            # Create Future if Coroutine
             if iscoroutine(method):
-                self.futures.append(result)
-                result = None
+                # Run Coroutine as a Task once
+                task = create_task(result)
+                await sleep(0)
+                # Check if Task is done, returning the result otherwise, return a future.
+                if task.done():
+                    result = task.result()
+                else:
+                    future = PipeFuture()
+                    self.futures.append(create_task(self.execute_awaitable_future(awaitable=task, future=future)))
+                    result = future
         else:
             result = method
-        self.receive_queue.put(result)
+
+        return result
+
+    async def queue_execute_remote(self, name, args=(), kwargs={}) -> PipeFuture:
+        future = PipeFuture()
+        self.send_queue.put((future, name, args, kwargs))
+        return future
+
+    async def execute_remote(self, name, args=(), kwargs={}) -> Any:
+        return await self.queue_execute_remote(name, args, kwargs)
+
+    # Listening
+    async def listen(self):
+        # Listen for Execution Method
+        item = await self.send_queue.get_async()
+        if item is not None:
+            future, name, args, kwargs = item
+
+            # Execute Method
+            future.set_result(await self.execute_method(name, args, kwargs))
 
     async def listen_loop(self) -> None:
         """An async loop that executes the listen consecutively until an event stops it."""
@@ -193,34 +247,6 @@ class RemoteExecutor(BaseObject):
         """Executes a single run in the async loop."""
         run(self._run())
 
-    async def run_async(self, obj=None, is_process: bool | None = None) -> None:
-        """Executes a single async run and delegates to another process is selected.
-
-        Args:
-            is_process: Determines if this object should run in a separate process.
-        """
-        # Raise Error if the task is already running.
-        if self._alive_event.is_set():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Set object
-        if obj is not None:
-            self.object = obj
-
-        # Set to Alive
-        self._alive_event.set()
-
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
-        # Use Correct Context
-        if self._is_process:
-            self.process.target = self._run_async_loop
-            self.process.start()
-        else:
-            await self._run()
-
     def run(self, obj=None, is_process: bool | None = None) -> Task | None:
         """Executes a single run of the task and delegates to another process is selected.
 
@@ -231,6 +257,10 @@ class RemoteExecutor(BaseObject):
         if self._alive_event.is_set():
             raise RuntimeError(f"{self} task is already running.")
 
+        # Set separate process
+        if is_process is not None:
+            self._is_process = is_process
+
         # Set object
         if obj is not None:
             self.object = obj
@@ -238,20 +268,14 @@ class RemoteExecutor(BaseObject):
         # Set to Alive
         self._alive_event.set()
 
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
         # Use Correct Context
         if self._is_process:
             self.process.target = self._run_async_loop
             self.process.start()
-            return
-        elif self.async_event_loop is not None:
+        elif self.event_loop is not None:
             return create_task(self._run())
         else:
             self._run_async_loop()
-            return
 
     # Start Loop
     async def _start(self) -> None:
@@ -274,35 +298,7 @@ class RemoteExecutor(BaseObject):
         """Starts the continuous execution of the task in the async loop."""
         run(self._start())
 
-    async def start_async(self, obj=None, is_process: bool | None = None) -> None:
-        """Starts the async continuous execution of the task and delegates to another process is selected.
-
-        Args:
-            is_process: Determines if this object should start in a separate process.
-        """
-        # Raise Error if the task is already running.
-        if self._alive_event.is_set():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Set object
-        if obj is not None:
-            self.object = obj
-
-        # Set to Alive
-        self._alive_event.set()
-
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
-        # Use Correct Context
-        if self._is_process:
-            self.process.target = self._start_async_loop
-            self.process.start()
-        else:
-            await self._start()
-
-    def start(self, obj=None, is_process: bool | None = None) -> Task | None:
+    def start(self, obj: Any =None, is_process: bool | None = None) -> Task | None:
         """Starts the continuous execution of the task and delegates to another process is selected.
 
         Args:
@@ -312,6 +308,10 @@ class RemoteExecutor(BaseObject):
         if self._alive_event.is_set():
             raise RuntimeError(f"{self} task is already running.")
 
+        # Set separate process
+        if is_process is not None:
+            self._is_process = is_process
+
         # Set object
         if obj is not None:
             self.object = obj
@@ -319,20 +319,14 @@ class RemoteExecutor(BaseObject):
         # Set to Alive
         self._alive_event.set()
 
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
         # Use Correct Context
         if self._is_process:
             self.process.target = self._start_async_loop
             self.process.start()
-            return
-        elif self.async_event_loop is not None:
+        elif self.event_loop is not None:
             return create_task(self._start())
         else:
             self._start_async_loop()
-            return
 
     # Joins
     def join(self, timeout: float | None = None) -> None:

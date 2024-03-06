@@ -38,12 +38,14 @@ class MultiProcessingLock(Lock, LockInterface):
     Args:
         ctx: The context for the Python multiprocessing.
     """
+    # Attributes #
+    acquire_interrupt: MultiProcessingInterrupt
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(self, *, ctx: BaseContext | None = None) -> None:
-        # New Attributes #
-        self.acquire_interrupt: MultiProcessingInterrupt = MultiProcessingInterrupt()
+        # Attributes #
+        self.acquire_interrupt = MultiProcessingInterrupt()
 
         # Construction #
         super().__init__(ctx=get_context() if ctx is None else ctx)

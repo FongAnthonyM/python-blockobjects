@@ -17,7 +17,7 @@ from asyncio import sleep
 from multiprocessing import Process as Process_
 from multiprocessing import cpu_count
 from time import perf_counter
-from typing import Any
+from typing import ClassVar, Any
 
 # Third-Party Packages #
 from baseobjects import BaseObject, search_sentinel
@@ -56,40 +56,22 @@ class Process(BaseObject):
         daemon : Determines if the separate process will continue after the main process exits.
         init: Determines if this object will construct.
     """
+    # Class Attributes #
+    CPU_COUNT: ClassVar[int] = cpu_count()
 
-    CPU_COUNT: int = cpu_count()
+    # Attributes #
+    target: Any | None = None
+    name: str | None = None
+    args: tuple[Any] = tuple()
+    kwargs: dict[str, Any] = {}
+    daemon: bool | None = None
 
-    # Construction/Destruction
-    def __init__(
-        self,
-        group: None = None,
-        target: None = None,
-        name: str | None | object = search_sentinel,
-        args: tuple[Any] = (),
-        kwargs: dict[str, Any] | None = None,
-        *,
-        daemon: bool | None = None,
-        init=True,
-    ) -> None:
-        # New Attributes #
-        self.target: Any | None = None
-        self.name: str | None = None
-        self.args: tuple[Any] = tuple()
-        self.kwargs: dict[str, Any] = {}
-        self.daemon: bool | None = None
+    join_interrupt: MultiProcessingInterrupt | None = None
 
-        self.join_interrupt: MultiProcessingInterrupt | None = None
+    process: Process_ | None = None
+    previous_processes: list["Process"]
 
-        self.process: Process_ | None = None
-        self.previous_processes: list[Process] = []
-
-        # Parent Attributes #
-        super().__init__()
-
-        # Construct #
-        if init:
-            self.construct(target=target, name=name, args=args, kwargs=kwargs, daemon=daemon)
-
+    # Properties #
     @property
     def authkey(self) -> str | None:
         """Authorization key of the process."""
@@ -124,6 +106,29 @@ class Process(BaseObject):
             return self.process.sentinel
         except AttributeError:
             raise ValueError("process not started") from None
+
+    # Construction/Destruction
+    def __init__(
+        self,
+        group: None = None,
+        target: None = None,
+        name: str | None | object = search_sentinel,
+        args: tuple[Any] = (),
+        kwargs: dict[str, Any] | None = None,
+        *,
+        daemon: bool | None = None,
+        init=True,
+    ) -> None:
+        # Attributes #
+        self.kwargs = self.kwargs.copy()
+        self.previous_processes: list[Process] = []
+
+        # Parent Attributes #
+        super().__init__()
+
+        # Construct #
+        if init:
+            self.construct(target=target, name=name, args=args, kwargs=kwargs, daemon=daemon)
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:

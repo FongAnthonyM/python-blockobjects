@@ -37,7 +37,12 @@ class QueueInterface(BaseObject):
         raise NotImplemented
 
     async def get_async(
-        self, block: bool = True, timeout: float | None = None, interval: float = 0.0, *args: Any, **kwargs: Any
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        *args: Any,
+        **kwargs: Any,
     ) -> Any:
         """Asynchronously gets an item from the queue."""
         raise NotImplemented

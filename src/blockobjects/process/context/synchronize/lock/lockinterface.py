@@ -45,7 +45,7 @@ class LockInterface(BaseObject):
 
     @abstractmethod
     def release(self) -> None:
-        """Release the lock."""
+        """Releases the lock."""
 
     @abstractmethod
     async def acquire_async(self, block: bool = True, timeout: float | None = None, interval: float = 0.0) -> bool:

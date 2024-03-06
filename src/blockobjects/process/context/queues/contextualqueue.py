@@ -1,5 +1,5 @@
 """ contextualqueue.py
-Extends the multiprocessing Queue by adding async methods and interrupts for blocking methods.
+An object that wraps a queue created by a context object and can switch between multiple contexts.
 """
 # Package Header #
 from ....header import *
@@ -18,7 +18,7 @@ from typing import Any
 # Third-Party Packages #
 
 # Local Packages #
-from ..baseprocesscontext import BaseProcessContext
+from ..baseprocessingcontext import BaseProcessingContext
 from ..contextualobject import ContextualObject
 from .queueinterface import QueueInterface
 
@@ -26,20 +26,21 @@ from .queueinterface import QueueInterface
 # Definitions #
 # Classes #
 class ContextualQueue(ContextualObject, QueueInterface):
-    """Extends the multiprocessing Queue by adding async methods and interrupts for blocking methods.
-
-    Class Attributes:
-        _ignore_attributes: The attributes to not pickle when pickling.
+    """An object that wraps a queue created by a context object and can switch between multiple contexts.
 
     Attributes:
-        get_interrupt: An event which can be set to interrupt the get method blocking.
-        put_interrupt: An event which can be set to interrupt the ptt method blocking.
+        queue: The queue to wrap.
+        space_wait: Determines if this queue will wait for the queue space to enqueue an item.
 
     Args:
         maxsize: The maximum number items that can be in the queue.
         space_wait: Determines if this queue will wait for the queue space to enqueue an item.
-        ctx: The context for the Python multiprocessing.
+        context: The context of this Queue.
+        init: Determines if this object will construct.
     """
+    # Attributes #
+    queue: QueueInterface | None = None
+    space_wait: bool
 
     # Magic Methods #
     # Construction/Destruction
@@ -48,12 +49,10 @@ class ContextualQueue(ContextualObject, QueueInterface):
         maxsize: int = 0,
         space_wait: bool = False,
         *,
-        context: BaseProcessContext | None = None,
+        context: BaseProcessingContext | None = None,
         init: bool = True,
     ) -> None:
-        # New Attributes #
-        self.queue: QueueInterface = None
-
+        # Attributes #
         self.space_wait: bool = space_wait
 
         # Parent Attributes #
@@ -70,16 +69,30 @@ class ContextualQueue(ContextualObject, QueueInterface):
         maxsize: int = 0,
         space_wait: bool = False,
         *,
-        context: BaseProcessContext | None = None,
+        context: BaseProcessingContext | None = None,
     ) -> None:
+        """Constructs this object.
+
+        Args:
+            maxsize: The maximum number items that can be in the queue.
+            space_wait: Determines if this queue will wait for the queue space to enqueue an item.
+            context: The context of this Queue.
+        """
         super().construct(context=context)
 
         if context is not None:
             self.queue = self.context.require_queue(name=str(id(self)), maxsize=maxsize, space_wait=space_wait)
 
     # Context
-    def set_context(self, context: BaseProcessContext) -> None:
+    def set_context(self, context: BaseProcessingContext) -> None:
+        """Sets the context of this object to the given context.
+
+        Args:
+            context: The context to assign this object to.
+        """
         super().set_context(context=context)
+
+        # Create a new queue and move the contents to the new queue
         new_queue = context.require_queue(name=str(id(self)))
         while not self.queue.empty():
             new_queue.put(self.queue.get())

@@ -1,5 +1,5 @@
 """ contextualsimplequeue.py
-Extends the multiprocessing SimpleQueue by adding async methods and interrupts for blocking methods.
+An object that wraps a simple queue created by a context object and can switch between multiple contexts.
 """
 # Package Header #
 from ....header import *
@@ -18,7 +18,7 @@ from typing import Any
 # Third-Party Packages #
 
 # Local Packages #
-from ..baseprocesscontext import BaseProcessContext
+from ..baseprocessingcontext import BaseProcessingContext
 from ..contextualobject import ContextualObject
 from .queueinterface import QueueInterface
 
@@ -26,40 +26,37 @@ from .queueinterface import QueueInterface
 # Definitions #
 # Classes #
 class ContextualSimpleQueue(ContextualObject, QueueInterface):
-    """Extends the multiprocessing SimpleQueue by adding async methods and interrupts for blocking methods.
+    """An object that wraps a simple queue created by a context object and can switch between multiple contexts.
 
     Attributes:
-        get_interrupt: An event which can be set to interrupt the get method blocking.
-        put_interrupt: An event which can be set to interrupt the put method blocking.
-
-    Args:
-        ctx: The context for the Python multiprocessing.
+        queue: The simple queue to wrap.
     """
-
-    # Magic Methods #
-    # Construction/Destruction
-    def __init__(self, *, context: BaseProcessContext | None = None, init: bool = True) -> None:
-        # New Attributes #
-        self.queue: QueueInterface = None
-
-        # Parent Attributes #
-        super().__init__(init=False)
-
-        # Object Construction #
-        if init:
-            self.construct(context=context)
+    # Attributes #
+    queue: QueueInterface | None = None
 
     # Instance Methods #
     # Constructors/Destructors
-    def construct(self, *, context: BaseProcessContext | None = None) -> None:
+    def construct(self, *, context: BaseProcessingContext | None = None) -> None:
+        """Constructs this object.
+
+        Args:
+            context: The context of this Queue.
+        """
         super().construct(context=context)
 
         if context is not None:
             self.queue = self.context.require_simple_queue(name=str(id(self)))
 
     # Context
-    def set_context(self, context: BaseProcessContext) -> None:
+    def set_context(self, context: BaseProcessingContext) -> None:
+        """Sets the context of this object to the given context.
+
+        Args:
+            context: The context to assign this object to.
+        """
         super().set_context(context=context)
+
+        # Create a new queue and move the contents to the new queue
         new_queue = context.require_simple_queue(name=str(id(self)))
         while not self.queue.empty():
             new_queue.put(self.queue.get())

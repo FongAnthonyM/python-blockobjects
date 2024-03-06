@@ -2,7 +2,7 @@
 
 """
 # Package Header #
-from ..header import *
+from ...header import *
 
 # Header #
 __author__ = __author__
@@ -13,6 +13,5 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .context import *
-from .multiprocessing import *
-from .processdelegate import *
+from .processdelegate import ProcessDelegate
+from .delegatemethod import delegatemethod

@@ -1,5 +1,5 @@
 """ contextualobject.py.py
-
+A base class for an object containing a context object which determines its implementation.
 """
 # Package Header #
 from ...header import *
@@ -18,29 +18,37 @@ __email__ = __email__
 from baseobjects import BaseObject
 
 # Local Packages #
-from .baseprocesscontext import BaseProcessContext
+from .baseprocessingcontext import BaseProcessingContext
 
 
 # Definitions #
 # Classes #
 class ContextualObject(BaseObject):
-    """
-
-    Class Attributes:
+    """A base class for an object containing a context object which determines its implementation.
 
     Attributes:
+        _context: The context of this object.
 
     Args:
-
+        context: The context to assign this object to.
+        init: Determines if this object will construct.
     """
-    default_context: BaseProcessContext | None = None
+    # Attributes #
+    _context: BaseProcessingContext | None = None
+
+    # Properties #
+    @property
+    def context(self) -> BaseProcessingContext:
+        """The context of this object."""
+        return self._context
+
+    @context.setter
+    def context(self, value: BaseProcessingContext) -> None:
+        self.set_context(value)
 
     # Magic Methods #
     # Construction/Destruction
-    def __init__(self, *, context: BaseProcessContext | None = None, init: bool = True) -> None:
-        # New Attributes #
-        self._context: BaseProcessContext | None = self.default_context
-
+    def __init__(self, *, context: BaseProcessingContext | None = None, init: bool = True) -> None:
         # Parent Attributes #
         super().__init__(init=False)
 
@@ -48,22 +56,24 @@ class ContextualObject(BaseObject):
         if init:
             self.construct(context=context)
 
-    @property
-    def context(self) -> BaseProcessContext:
-        return self._context
-
-    @context.setter
-    def context(self, value: BaseProcessContext) -> None:
-        self.set_context(value)
-
     # Instance Methods #
     # Constructors/Destructors
-    def construct(self, *, context: BaseProcessContext | None = None) -> None:
+    def construct(self, *, context: BaseProcessingContext | None = None) -> None:
+        """Constructs this object.
+
+        Args:
+            context: The context of this object.
+        """
         if context is not None:
             self._context = context
 
         super().construct()
 
     # Context
-    def set_context(self, context: BaseProcessContext) -> None:
+    def set_context(self, context: BaseProcessingContext) -> None:
+        """Sets the context of this object to the given context.
+
+        Args:
+            context: The context to assign this object to.
+        """
         self._context = context

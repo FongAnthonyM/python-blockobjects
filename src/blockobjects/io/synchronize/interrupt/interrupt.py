@@ -17,7 +17,7 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ....process.context import BaseProcessContext
+from ....process.context import BaseProcessingContext
 from ..event import Event
 
 
@@ -36,7 +36,7 @@ class Interrupt(Event):
 
     # Magic Methods #
     # Construction/Destruction
-    def __init__(self, parent: Event | None = None, *, context: BaseProcessContext | None = None, init: bool = True) -> None:
+    def __init__(self, parent: Event | None = None, *, context: BaseProcessingContext | None = None, init: bool = True) -> None:
         # New Attributes #
         self.parent: Event | None = parent
 

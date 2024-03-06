@@ -1,5 +1,5 @@
 """ contextualevent.py
-
+An object that wraps an event created by a context object and can switch between multiple contexts.
 """
 # Package Header #
 from .....header import *
@@ -17,7 +17,7 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ...baseprocesscontext import BaseProcessContext
+from ...baseprocessingcontext import BaseProcessingContext
 from ...contextualobject import ContextualObject
 from .eventinterface import EventInterface
 
@@ -25,51 +25,63 @@ from .eventinterface import EventInterface
 # Definitions #
 # Classes #
 class ContextualEvent(ContextualObject, EventInterface):
+    """An object that wraps an event created by a context object and can switch between multiple contexts.
+
+    Attributes:
+        event: The event to wrap.
     """
-    """
+    # Attributes #
+    event: EventInterface | None = None
 
     # Magic Methods #
-    # Construction/Destruction
-    def __init__(self, *, context: BaseProcessContext | None = None, init: bool = True) -> None:
-        # New Attributes #
-        self.event = None
-
-        # Parent Attributes #
-        super().__init__(init=False)
-
-        # Object Construction #
-        if init:
-            self.construct(context=context)
-
     # Type Conversion
     def __bool__(self) -> bool:
         """Returns a boolean based on the state of this event."""
         return self.event.is_set()
 
     # Instance Methods #
-    # Constructors / Destructors
-    def construct(self, *, context: BaseProcessContext | None = None) -> None:
+    # Constructors/Destructors
+    def construct(self, *, context: BaseProcessingContext | None = None) -> None:
+        """Constructs this object.
+
+        Args:
+            context: The context of this Queue.
+        """
         super().construct(context=context)
 
         if context is not None:
             self.event = self.context.require_event(name=str(id(self)))
 
     # Context
-    def set_context(self, context: BaseProcessContext) -> None:
+    def set_context(self, context: BaseProcessingContext) -> None:
+        """Sets the context of this object to the given context.
+
+        Args:
+            context: The context to assign this object to.
+        """
         super().set_context(context=context)
+
+        # Creates a new event and assigns it to the current event state.
         new_event = context.require_event(name=str(id(self)))
         if self.event:
             new_event.set()
         self.event = new_event
 
     # Event
-    def is_set(self):
-        return self.event.is_set
+    def is_set(self) -> bool:
+        """Checks if the event is set.
 
-    def set(self):
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        return self.event.is_set()
+
+    def set(self) -> None:
+        """Sets the event."""
         self.event.set()
 
-    def clear(self):
+    def clear(self) -> None:
+        """Clears the event."""
         self.event.clear()
 
     def wait(self, timeout: float | None = None) -> bool:

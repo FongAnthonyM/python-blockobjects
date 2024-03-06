@@ -34,12 +34,14 @@ class MultiProcessingInterrupt(MultiProcessingEvent):
         parent: An Event which, if set, will also set this interrupt.
         ctx: The context for the Python multiprocessing.
     """
+    # Attributes #
+    parent: Event | None = None
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(self, parent: Event | None = None, *, ctx: BaseContext | None = None) -> None:
-        # New Attributes #
-        self.parent: Event | None = parent
+        # Attributes #
+        self.parent = parent
 
         # Construction #
         super().__init__(ctx=ctx)

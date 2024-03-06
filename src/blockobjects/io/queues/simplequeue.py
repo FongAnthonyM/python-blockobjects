@@ -17,7 +17,7 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ...process.context import BaseProcessContext, DEFAULT_PROCESS_CONTEXT
+from ...process.context import BaseProcessingContext, DEFAULT_PROCESS_CONTEXT
 from ...process.context import ContextualSimpleQueue
 
 
@@ -25,5 +25,5 @@ from ...process.context import ContextualSimpleQueue
 # Classes #
 class SimpleQueue(ContextualSimpleQueue):
     """"""
-    default_context: BaseProcessContext = DEFAULT_PROCESS_CONTEXT
+    default_context: BaseProcessingContext = DEFAULT_PROCESS_CONTEXT
 

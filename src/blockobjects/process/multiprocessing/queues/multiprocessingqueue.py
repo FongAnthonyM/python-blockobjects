@@ -20,7 +20,7 @@ from multiprocessing.context import BaseContext
 from multiprocessing.reduction import ForkingPickler
 from queue import Empty, Full
 from time import perf_counter
-from typing import Any
+from typing import ClassVar, Any
 
 # Third-Party Packages #
 
@@ -40,21 +40,27 @@ class MultiProcessingQueue(Queue, QueueInterface):
     Attributes:
         get_interrupt: An event which can be set to interrupt the get method blocking.
         put_interrupt: An event which can be set to interrupt the ptt method blocking.
+        space_wait: Determines if this queue will wait for the queue space to enqueue an item.
 
     Args:
         maxsize: The maximum number items that can be in the queue.
         space_wait: Determines if this queue will wait for the queue space to enqueue an item.
         ctx: The context for the Python multiprocessing.
     """
+    # Class Attributes #
+    _ignore_attributes: ClassVar[set[str]] = set(Queue(ctx=get_context()).__dict__.keys())
 
-    _ignore_attributes: set[str] = set(Queue(ctx=get_context()).__dict__.keys())
+    # Attributes #
+    get_interrupt: MultiProcessingInterrupt
+    put_interrupt: MultiProcessingInterrupt
+    space_wait: bool
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(self, maxsize: int = 0, space_wait: bool = False, *, ctx: BaseContext | None = None) -> None:
         # New Attributes #
-        self.get_interrupt: MultiProcessingInterrupt = MultiProcessingInterrupt()
-        self.put_interrupt: MultiProcessingInterrupt = MultiProcessingInterrupt()
+        self.get_interrupt = MultiProcessingInterrupt()
+        self.put_interrupt = MultiProcessingInterrupt()
 
         self.space_wait: bool = space_wait
 

@@ -41,13 +41,16 @@ class MultiProcessingSimpleQueue(SimpleQueue, QueueInterface):
     Args:
         ctx: The context for the Python multiprocessing.
     """
+    # Attributes #
+    get_interrupt: MultiProcessingInterrupt
+    put_interrupt: MultiProcessingInterrupt
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(self, *, ctx: BaseContext | None = None) -> None:
-        # New Attributes #
-        self.get_interrupt: MultiProcessingInterrupt = MultiProcessingInterrupt()
-        self.put_interrupt: MultiProcessingInterrupt = MultiProcessingInterrupt()
+        # Attributes #
+        self.get_interrupt = MultiProcessingInterrupt()
+        self.put_interrupt = MultiProcessingInterrupt()
 
         # Construction #
         super().__init__(ctx=get_context() if ctx is None else ctx)
