@@ -23,5 +23,5 @@ from ...context import ProxyInterface
 
 # Definitions #
 # Classes #
-class MultiprocessingProxy(SharedMemoryManager):
+class MultiprocessingProxyServer(SharedMemoryManager):
     pass
