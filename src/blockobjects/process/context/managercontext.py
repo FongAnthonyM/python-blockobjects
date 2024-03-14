@@ -20,9 +20,9 @@ from weakref import ref
 
 # Local Packages #
 from .baseprocessingcontext import BaseProcessingContext
-from .synchronize import LockInterface, EventInterface
-from .synchronize import ContextualEvent, ContextualLock
+from .synchronize import LockInterface, EventInterface, ContextualLock, ContextualEvent
 from .queues import QueueInterface, ContextualQueue, ContextualSimpleQueue
+from .proxies import ProxyInterface, ContextualProxy
 
 
 # Definitions #
@@ -50,6 +50,7 @@ class ManagerContext(BaseProcessingContext):
     event_type: type[ContextualEvent] = ContextualEvent
     queue_type: type[ContextualQueue] = ContextualQueue
     simple_queue_type: type[ContextualSimpleQueue] = ContextualSimpleQueue
+    proxy_type = ContextualProxy
 
     contexts: dict[str, BaseProcessingContext] = {}
     context: BaseProcessingContext | None = None
@@ -184,6 +185,28 @@ class ManagerContext(BaseProcessingContext):
             The simple queue.
         """
         return super().create_simple_queue(name, *args, cls=cls, **({"context": self.context} | kwargs))
+
+    def create_proxy(self, name=None, cls=None, args=(), kwargs=None, *_args, c_cls=None, **_kwargs) -> ProxyInterface:
+        """Creates and adds a proxy to the context's object register.
+
+        Args:
+            name: The name of the remote proxy to create.
+            cls: The class type of the remote proxy to create.
+            *args: The arguments for creating the remote proxy.
+            **kwargs: The keyword arguments for creating the remote proxy.
+
+        Returns:
+            The proxy.
+        """
+        return super().create_proxy(
+            name,
+            cls,
+            args,
+            kwargs,
+            *_args,
+            c_cls=c_cls,
+            **({"context": self.context} | _kwargs),
+        )
 
 
 # Constants #

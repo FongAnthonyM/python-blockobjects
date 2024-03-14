@@ -12,9 +12,9 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import get_running_loop, Event, InvalidStateError, AbstractEventLoop
+from asyncio import get_event_loop, Event, InvalidStateError, AbstractEventLoop
 from multiprocessing import Pipe
-from multiprocessing.connection import PipeConnection
+from multiprocessing.connection import Connection
 from typing import Any
 
 # Third-Party Packages #
@@ -28,19 +28,22 @@ from baseobjects import BaseObject
 class PipeFuture(BaseObject):
     # Attributes #
     _sentinel: object = object()
+    loop: AbstractEventLoop
+
     _recv: Event
     _sent: bool = False
-    recv_con: PipeConnection | None = None
-    send_con: PipeConnection | None = None
-    loop: AbstractEventLoop
-    result: Any = _sentinel
+
+    recv_con: Connection | None = None
+    send_con: Connection | None = None
+
+    _result: Any = _sentinel
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(
         self,
-        recv_con: PipeConnection | None = None,
-        send_con: PipeConnection | None = None,
+        recv_con: Connection | None = None,
+        send_con: Connection | None = None,
         *,
         duplex: bool = False,
         loop: AbstractEventLoop | None = None,
@@ -48,7 +51,7 @@ class PipeFuture(BaseObject):
     ) -> None:
         # Attributes #
         self._recv = Event()
-        self.loop = get_running_loop()
+        self.loop = get_event_loop()
 
         # Parent Attributes #
         super().__init__(init=False)
@@ -66,8 +69,8 @@ class PipeFuture(BaseObject):
     # Constructors/Destructors
     def construct(
         self,
-        recv_con: PipeConnection | None = None,
-        send_con: PipeConnection | None = None,
+        recv_con: Connection | None = None,
+        send_con: Connection | None = None,
         duplex: bool = False,
         *,
         loop: AbstractEventLoop | None = None,
@@ -80,13 +83,19 @@ class PipeFuture(BaseObject):
 
         super().construct()
 
-    def create_pipe(self, duplex: bool = False) -> tuple[PipeConnection, PipeConnection]:
+    def create_pipe(self, duplex: bool = False) -> tuple[Connection, Connection]:
         self.recv_con, self.send_con = connections = Pipe(duplex=duplex)
         return connections
 
     def get_loop(self, *args, **kwargs) -> AbstractEventLoop:
         """ Return the event loop the Future is bound to. """
         return self.loop
+
+    def done(self) -> bool:
+        return self.result is not self._sentinel
+
+    def parse_result(self, result) -> Any:
+        return result
 
     def result(self, *args, **kwargs) -> Any:
         """Returns the result this future represents.
@@ -95,7 +104,12 @@ class PipeFuture(BaseObject):
         future's result isn't yet available, raises InvalidStateError.  If
         the future is done and has an exception set, this exception is raised.
         """
-        return self.result
+        self.wait()
+        return self.parse_result(self._result)
+
+    def wait(self) -> None:
+        if self._result is self._sentinel:
+            self._result = self.recv_con.recv()
 
     async def _wait_async(self) -> None:
         fd = self.recv_con.fileno()
@@ -106,13 +120,13 @@ class PipeFuture(BaseObject):
             self._recv.clear()
 
         self.loop.remove_reader(fd)
-        self.result = self.recv_con.recv()
+        self._result = self.recv_con.recv()
 
     async def wait_async(self) -> None:
         if self.result is self._sentinel:
             await self._wait_async()
 
-        return self.result
+        return self._result
 
     def set_result(self, result, *args, **kwargs) -> None:
         """

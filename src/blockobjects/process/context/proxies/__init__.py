@@ -14,3 +14,4 @@ __email__ = __email__
 # Imports #
 # Local Packages #
 from .proxyinterface import ProxyInterface
+from .conxtexualproxy import ContextualProxy

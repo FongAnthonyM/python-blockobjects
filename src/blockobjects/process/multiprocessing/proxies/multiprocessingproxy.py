@@ -13,35 +13,95 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from multiprocessing import util, process
+from multiprocessing.managers import BaseProxy, dispatch, convert_to_error, listener_client
+import threading
 
 # Third-Party Packages #
 
 # Local Packages #
 from ...context import ProxyInterface
-from .multiprocessingproxyserver import MultiprocessingProxyServer
 
 
 # Definitions #
 # Classes #
-class MultiprocessingProxy(ProxyInterface):
+class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
-    # Class Attributes #
-    _proxy_name: str | None = None
-    _server_type: type[MultiprocessingProxyServer] = MultiprocessingProxyServer
+    def create_proxy(self, token, exposed):
+        proxytype = self._manager._registry[token.typeid][-1]
+        token.address = self._token.address
+        proxy = proxytype(
+            token, self._serializer, manager=self._manager,
+            authkey=self._authkey, exposed=exposed
+        )
+        conn = self._Client(token.address, authkey=self._authkey)
+        dispatch(conn, None, 'decref', (token.id,))
+        return proxy
 
-    # Class Methods #
-    @classmethod
-    def get_proxy_name(cls) -> str:
-        return cls._proxy_name or cls.__name__
+    def parse_result(self, result):
+        kind, result = result
+        match kind:
+            case '#RETURN':
+                return result
+            case '#PROXY':
+                exposed, token = result
+                return self.create_proxy(token, exposed)
+            case '#FUTURE':
+                result.parse_result = self.parse_result
+                return result
 
-    @classmethod
-    def set_server_type(cls, server_type: type[MultiprocessingProxyServer]) -> None:
-        name = cls.get_proxy_name()
-        if not hasattr(server_type, name):
-            server_type.register(name, cls)
-        cls._server_type = server_type
+        raise convert_to_error(kind, result)
 
-    # Attributes #
-    proxy_server: MultiprocessingProxyServer
+    def _callmethod(self, methodname, args=(), kwds={}):
+        try:
+            conn = self._tls.connection
+        except AttributeError:
+            util.debug('thread %r does not own a connection', threading.current_thread().name)
+            self._connect()
+            conn = self._tls.connection
 
+        conn.send((self._id, methodname, args, kwds))
+        return self.parse_result(conn.recv())
+
+
+# Functions #
+def MakeMultiprocessingProxyType(name, exposed, _cache={}) -> type:
+    exposed = tuple(exposed)
+    try:
+        return _cache[(name, exposed)]
+    except KeyError:
+        pass
+
+    dic = {}
+
+    for meth in exposed:
+        exec('''def %s(self, /, *args, **kwds):
+        return self._callmethod(%r, args, kwds)''' % (meth, meth), dic)
+
+    ProxyType = type(name, (MultiprocessingProxy,), dic)
+    ProxyType._exposed_ = exposed
+    _cache[(name, exposed)] = ProxyType
+    return ProxyType
+
+
+def AutoMultiprocessingProxy(token, serializer, manager=None, authkey=None, exposed=None, incref=True, manager_owned=False):
+    _Client = listener_client[serializer][1]
+
+    if exposed is None:
+        conn = _Client(token.address, authkey=authkey)
+        try:
+            exposed = dispatch(conn, None, 'get_methods', (token,))
+        finally:
+            conn.close()
+
+    if authkey is None and manager is not None:
+        authkey = manager._authkey
+    if authkey is None:
+        authkey = process.current_process().authkey
+
+    ProxyType = MakeMultiprocessingProxyType('AutoProxy[%s]' % token.typeid, exposed)
+    proxy = ProxyType(token, serializer, manager=manager, authkey=authkey,
+                      incref=incref, manager_owned=manager_owned)
+    proxy._isauto = True
+    return proxy
 

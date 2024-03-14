@@ -33,6 +33,10 @@ class ProcessDelegate(ContextualObject):
     Args:
 
     """
+
+    exposed: tuple = ()
+    unexposed: tuple = ()
+
     # Attributes
     _is_remote: bool = False
 

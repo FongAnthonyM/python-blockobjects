@@ -25,13 +25,7 @@ from baseobjects import BaseObject
 # Definitions #
 # Classes #
 class ProxyInterface(BaseObject):
+    """"""
     # Instance Methods #
     # State
-    @abstractmethod
-    def is_alive(self) -> bool:
-        pass
 
-    # Execution
-    @abstractmethod
-    async def execute_remote(self, name, args=(), kwargs={}) -> Any:
-        pass

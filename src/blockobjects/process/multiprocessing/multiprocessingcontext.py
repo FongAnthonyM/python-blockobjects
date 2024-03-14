@@ -1,6 +1,8 @@
 """ multiprocessingcontext.py.py
 
 """
+from multiprocessing.managers import BaseManager
+
 # Package Header #
 from ...header import *
 
@@ -16,13 +18,14 @@ __email__ = __email__
 from weakref import ref
 
 # Third-Party Packages #
+from multiprocessing.managers import BaseManager, BaseProxy
 
 # Local Packages #
 from ..context import BaseProcessingContext, ManagerContext
 from ..context import LockInterface, EventInterface, QueueInterface, ProxyInterface
 from .synchronize import MultiProcessingLock, MultiProcessingEvent
 from .queues import MultiProcessingQueue, MultiProcessingSimpleQueue
-from .multiprocessingexecutor import MultiProcessingProxy
+from .proxies import MultiprocessingProxyServer
 
 
 # Definitions #
@@ -41,7 +44,99 @@ class MultiProcessingContext(BaseProcessingContext):
     event_type: type[EventInterface] = MultiProcessingEvent
     queue_type: type[QueueInterface] = MultiProcessingQueue
     simple_queue_type: type[QueueInterface] = MultiProcessingSimpleQueue
-    proxy_type: type[ProxyInterface] = MultiProcessingProxy
+
+    default_manager_type: BaseManager = MultiprocessingProxyServer
+    manager_types: dict[str, type[BaseManager]]
+    managers: dict[str, BaseManager]
+    proxy_register: dict[str, tuple[BaseProxy, BaseManager, type[BaseManager]]]
+
+    # Magic Methods  #
+    # Construction/Destruction
+    def __init__(self, init: bool = True) -> None:
+        # Attributes #
+        self.manager_types = {}
+        self.managers = {}
+        self.proxy_register = {}
+
+        # Parent Attributes #
+        super().__init__(init=False)
+
+        # Object Construction #
+        if init:
+            self.construct()
+
+    # Instance Methods #
+    # Proxies
+    def register_manager(
+        self,
+        name: str,
+        manager: BaseManager | None = None,
+        manager_type: type[BaseManager] | None = None,
+    ) -> None:
+        """Registers a manager and/or manager type to a class name to use for creating proxies.
+
+        Args:
+            name: The name of the class to register the manager to.
+            manager: The manager to register.
+            manager_type: The manager type to register.
+        """
+        if manager is not None:
+            self.managers[name] = manager
+        if manager_type is not None:
+            self.manager_types[name] = manager_type
+
+    def create_proxy(
+        self,
+        name=None,
+        cls=None,
+        args=(),
+        kwargs=None,
+        manager_type=None,
+        manager=None,
+        *_args,
+        **_kwargs,
+    ) -> ProxyInterface:
+        """Creates and adds a proxy to the context's object register.
+
+        Args:
+            name: The name of the remote proxy to create.
+            cls: The class type of the remote proxy to create.
+            args: The arguments for creating the remote proxy.
+            kwargs: The keyword arguments for creating the remote proxy.
+            manager_type: The type of multiprocessing manager to use to create the proxy.
+            manager: The multiprocessing manager to use to create the proxy.
+
+        Returns:
+            The proxy.
+        """
+        if cls is None:
+            cls = self.proxy_type
+        c_name = cls.__name__
+
+        # Get Manager Type
+        if manager_type is None:
+            manager_type = self.manager_types.get(c_name, self.default_manager_type)
+        elif c_name not in self.manager_types:
+            self.manager_types[c_name] = manager_type
+
+        if not hasattr(manager_type, c_name):
+            manager_type.register(c_name, cls)
+
+        # Get Manager
+        if manager is not None and c_name not in self.managers:
+            self.managers[c_name] = manager
+        elif (manager := self.managers.get(c_name, None)) is None:
+            manager = manager_type()
+
+        # Create The Proxy
+        proxy = getattr(manager, c_name)(*args, **kwargs)
+
+        # Register the Proxy
+        p_ref = ref(proxy)
+        p_name = name or str(id(proxy))
+        self.proxy_register[p_name] = (p_ref, manager, manager_type)
+        self.object_register["proxies"][p_name] = p_ref
+        return proxy
 
 
 # Assignment #
