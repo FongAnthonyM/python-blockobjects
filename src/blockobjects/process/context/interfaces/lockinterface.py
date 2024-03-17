@@ -2,7 +2,7 @@
 An interface which outlines the basis for a lock.
 """
 # Package Header #
-from .....header import *
+from src.blockobjects.header import *
 
 # Header #
 __author__ = __author__

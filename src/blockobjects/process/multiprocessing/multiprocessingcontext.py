@@ -94,6 +94,8 @@ class MultiProcessingContext(BaseProcessingContext):
         manager_type=None,
         manager=None,
         *_args,
+        c_cls=None,
+        exposed=None,
         **_kwargs,
     ) -> ProxyInterface:
         """Creates and adds a proxy to the context's object register.
@@ -120,13 +122,16 @@ class MultiProcessingContext(BaseProcessingContext):
             self.manager_types[c_name] = manager_type
 
         if not hasattr(manager_type, c_name):
-            manager_type.register(c_name, cls)
+            manager_type.register(c_name, cls, exposed=exposed, **_kwargs)
 
         # Get Manager
         if manager is not None and c_name not in self.managers:
             self.managers[c_name] = manager
         elif (manager := self.managers.get(c_name, None)) is None:
             manager = manager_type()
+
+        if not manager.is_alive():
+            manager.start()
 
         # Create The Proxy
         proxy = getattr(manager, c_name)(*args, **kwargs)

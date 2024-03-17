@@ -14,17 +14,20 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from multiprocessing import util
-from multiprocessing.managers import SharedMemoryManager, dispatch
+from multiprocessing.managers import SharedMemoryManager, dispatch, State
 
 # Third-Party Packages #
 
 # Local Packages #
+from .asyncserver import AsyncServer
 from .multiprocessingproxy import AutoMultiprocessingProxy
 
 
 # Definitions #
 # Classes #
 class MultiprocessingProxyServer(SharedMemoryManager):
+    _Server = AsyncServer
+
     @classmethod
     def register(cls, typeid, callable=None, proxytype=None, exposed=None, method_to_typeid=None, create_method=True):
         if '_registry' not in cls.__dict__:
@@ -61,3 +64,13 @@ class MultiprocessingProxyServer(SharedMemoryManager):
 
             temp.__name__ = typeid
             setattr(cls, typeid, temp)
+
+    def __del__(self):
+        super().__del__()
+        try:
+            self.shutdown()
+        except:
+            pass
+
+    def is_alive(self):
+        return self._state.value == State.STARTED

@@ -20,9 +20,7 @@ from weakref import ref
 from baseobjects import BaseObject
 
 # Local Packages #
-from .synchronize import LockInterface, EventInterface
-from .queues import QueueInterface
-from .proxies import ProxyInterface
+from .interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
 
 
 # Definitions #
@@ -245,7 +243,17 @@ class BaseProcessingContext(BaseObject):
         """
         self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = ref(queue)
 
-    def create_proxy(self, name=None, cls=None, args=(), kwargs=None, *_args, c_cls=None, **_kwargs) -> ProxyInterface:
+    def create_proxy(
+        self,
+        name=None,
+        cls=None,
+        args=(),
+        kwargs=None,
+        *_args,
+        c_cls=None,
+        exposed=None,
+        **_kwargs,
+    ) -> ProxyInterface:
         """Creates and adds a proxy to the context's object register.
 
         Args:
@@ -260,7 +268,7 @@ class BaseProcessingContext(BaseObject):
         if c_cls is None:
             c_cls = self.proxy_type
 
-        proxy = c_cls.new_proxy(cls, args, kwargs=kwargs, *_args, c_cls=c_cls, **_kwargs)
+        proxy = c_cls.new_proxy(cls, args, kwargs=kwargs, *_args, c_cls=c_cls, exposed=exposed, **_kwargs)
 
         self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = ref(proxy)
         return proxy

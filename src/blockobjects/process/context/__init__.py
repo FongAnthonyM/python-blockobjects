@@ -16,6 +16,7 @@ __email__ = __email__
 from .baseprocessingcontext import BaseProcessingContext
 from .managercontext import ManagerContext, DEFAULT_PROCESS_CONTEXT
 from .contextualobject import ContextualObject
+from .interfaces import *
 from .synchronize import *
 from .queues import *
 from .proxies import *

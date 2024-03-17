@@ -20,7 +20,7 @@ from typing import Any
 # Local Packages #
 from ..baseprocessingcontext import BaseProcessingContext
 from ..contextualobject import ContextualObject
-from .queueinterface import QueueInterface
+from ..interfaces import QueueInterface
 
 
 # Definitions #

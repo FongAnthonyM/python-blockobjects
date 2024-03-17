@@ -19,7 +19,7 @@ __email__ = __email__
 # Local Packages #
 from ...baseprocessingcontext import BaseProcessingContext
 from ...contextualobject import ContextualObject
-from .eventinterface import EventInterface
+from ...interfaces import EventInterface
 
 
 # Definitions #

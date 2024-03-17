@@ -13,5 +13,4 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .eventinterface import EventInterface
 from .contextualevent import ContextualEvent

@@ -13,4 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .conxtexualproxy import ContextualProxy
+from .eventinterface import EventInterface
+from .lockinterface import LockInterface
+from .queueinterface import QueueInterface
+from .proxyinterface import ProxyInterface

@@ -20,9 +20,10 @@ from weakref import ref
 
 # Local Packages #
 from .baseprocessingcontext import BaseProcessingContext
-from .synchronize import LockInterface, EventInterface, ContextualLock, ContextualEvent
-from .queues import QueueInterface, ContextualQueue, ContextualSimpleQueue
-from .proxies import ProxyInterface, ContextualProxy
+from .interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
+from .synchronize import ContextualLock, ContextualEvent
+from .queues import ContextualQueue, ContextualSimpleQueue
+from .proxies import ContextualProxy
 
 
 # Definitions #
@@ -186,7 +187,17 @@ class ManagerContext(BaseProcessingContext):
         """
         return super().create_simple_queue(name, *args, cls=cls, **({"context": self.context} | kwargs))
 
-    def create_proxy(self, name=None, cls=None, args=(), kwargs=None, *_args, c_cls=None, **_kwargs) -> ProxyInterface:
+    def create_proxy(
+        self,
+        name=None,
+        cls=None,
+        args=(),
+        kwargs=None,
+        *_args,
+        c_cls=None,
+        exposed=None,
+        **_kwargs,
+    ) -> ProxyInterface:
         """Creates and adds a proxy to the context's object register.
 
         Args:
@@ -205,6 +216,7 @@ class ManagerContext(BaseProcessingContext):
             kwargs,
             *_args,
             c_cls=c_cls,
+            exposed=exposed,
             **({"context": self.context} | _kwargs),
         )
 

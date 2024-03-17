@@ -13,6 +13,5 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .queueinterface import QueueInterface
 from .contextualsimplequeue import ContextualSimpleQueue
 from .contextualqueue import ContextualQueue

@@ -27,7 +27,7 @@ from ...context import ProxyInterface
 # Classes #
 class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
-    def create_proxy(self, token, exposed):
+    def _create_proxy(self, token, exposed):
         proxytype = self._manager._registry[token.typeid][-1]
         token.address = self._token.address
         proxy = proxytype(
@@ -38,19 +38,19 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
         dispatch(conn, None, 'decref', (token.id,))
         return proxy
 
-    def parse_result(self, result):
-        kind, result = result
+    def _parse_result(self, result):
+        kind, item = result
         match kind:
             case '#RETURN':
-                return result
+                return item
             case '#PROXY':
-                exposed, token = result
-                return self.create_proxy(token, exposed)
+                exposed, token = item
+                return self._create_proxy(token, exposed)
             case '#FUTURE':
-                result.parse_result = self.parse_result
-                return result
+                item.parse_result = self._parse_result
+                return item
 
-        raise convert_to_error(kind, result)
+        raise convert_to_error(kind, item)
 
     def _callmethod(self, methodname, args=(), kwds={}):
         try:
@@ -61,7 +61,7 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
             conn = self._tls.connection
 
         conn.send((self._id, methodname, args, kwds))
-        return self.parse_result(conn.recv())
+        return self._parse_result(conn.recv())
 
 
 # Functions #

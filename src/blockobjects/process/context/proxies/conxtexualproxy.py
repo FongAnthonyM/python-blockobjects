@@ -14,15 +14,16 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from abc import abstractmethod
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Generator
+from typing import Any, ClassVar
 
 # Third-Party Packages #
+from baseobjects.typing import AnyCallable
 
 # Local Packages #
 from ..baseprocessingcontext import BaseProcessingContext
 from ..contextualobject import ContextualObject
-from .proxyinterface import ProxyInterface
+from ..interfaces import ProxyInterface
 
 
 # Definitions #
@@ -30,16 +31,45 @@ from .proxyinterface import ProxyInterface
 class ContextualProxy(ContextualObject, ProxyInterface):
 
     # Class Attributes
-    _proxy_classes: dict[type, dict[tuple[str, tuple], type]] = {}
-    _exposed_: set = set()
+    _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
+    _exposed_: ClassVar[set] = set()
+    _unexposed_: ClassVar[set] = set()
+    exposed: ClassVar[set]
 
     # Class Methods
     @classmethod
+    def iter_method_names(cls, obj) -> Generator[str, None, None]:
+        return (name for name in dir(obj) if callable(getattr(obj, name)))
+
+    @classmethod
+    def iter_public_method_names(cls, obj) -> Generator[str, None, None]:
+        return (name for name in cls.iter_method_names(obj) if name[0] != '_')
+
+    @classmethod
     def get_exposed(cls, target_cls: type, exposed: Iterable[str] | None = None) -> set[str]:
+        public_methods = set(cls.iter_public_method_names(target_cls))
         exposed = set(exposed or ())
         c_exposed = set(getattr(target_cls, "exposed", ()))
+        c_unexposed = set(getattr(target_cls, "unexposed", ()))
         p_exposed = cls._exposed_
-        return exposed | c_exposed | p_exposed
+        p_unexposed = cls._unexposed_
+        return (public_methods | exposed | c_exposed | p_exposed) - c_unexposed - p_unexposed
+
+    @classmethod
+    def _create_proxy_method(cls, name: str) -> AnyCallable:
+        """A factory for creating method functions for accessing a proxy's methods.
+
+        Args:
+            name: The name of the method
+
+        Returns:
+            The function for a method.
+        """
+        def func_(obj, *args, **kwargs):
+            """Evaluates the wrapped object's method."""
+            return getattr(obj._proxy, name)(*args, **kwargs)
+
+        return func_
 
     @classmethod
     def create_proxy_type(cls, name: str, exposed: Iterable[str]) -> type:
@@ -53,13 +83,10 @@ class ContextualProxy(ContextualObject, ProxyInterface):
 
         # Create and Register Class if it does not exist
         if (proxy_class := proxy_classes.get(key, None)) is None:
-            dic = {}
-            for meth in exposed:
-                exec('''def %s(self, /, *args, **kwds):
-                    return gettattr(self._proxy, %r)(*args, **kwds)''' % (meth, meth), dic)
-
-            proxy_classes[key] = proxy_class = type(name, (cls,), dic)
-            proxy_class._exposed_ = exposed
+            proxy_classes[key] = proxy_class = type(name, (cls,), {})
+            for name in exposed:
+                setattr(proxy_class, name, cls._create_proxy_method(name))
+            proxy_class.exposed = set(exposed)
 
         # Return Proxy Class
         return proxy_class
@@ -80,10 +107,10 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         proxy_type = cls.create_proxy_type(name=name, exposed=exposed)
 
         # Return Proxy
-        return proxy_type(cls=cls, args=args, kwargs=kwargs, **_kwargs)
+        return proxy_type(cls=target_cls, args=args, kwargs=kwargs, exposed=exposed, **_kwargs)
 
     # Attributes #
-    _proxy: ProxyInterface | None
+    _proxy: ProxyInterface | None = None
 
     # Magic Methods #
     # Construction/Destruction
@@ -94,6 +121,8 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         args=None,
         kwargs=None,
         *,
+        c_cls=None,
+        exposed: Iterable[str] | None = None,
         context: BaseProcessingContext | None = None,
         init: bool = True,
     ) -> None:
@@ -104,7 +133,15 @@ class ContextualProxy(ContextualObject, ProxyInterface):
 
         # Object Construction #
         if init:
-            self.construct(proxy=proxy, cls=cls, args=args, kwargs=kwargs, context=context)
+            self.construct(
+                proxy=proxy,
+                cls=cls,
+                args=args,
+                kwargs=kwargs,
+                c_cls=c_cls,
+                exposed=exposed,
+                context=context,
+            )
 
     # Instance Methods #
     # Constructors/Destructors
@@ -114,6 +151,8 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         cls=None,
         args=None,
         kwargs=None,
+        c_cls=None,
+        exposed: Iterable[str] | None = None,
         *,
         context: BaseProcessingContext | None = None,
     ) -> None:
@@ -128,15 +167,22 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         super().construct(context=context)
 
         if self._proxy is None and context is not None:
-            self._proxy = self.context.create_proxy(name=str(id(self)), cls=cls, args=args, kwargs=kwargs)
+            self._proxy = self.context.create_proxy(
+                name=str(id(self)),
+                cls=cls,
+                args=args,
+                kwargs=kwargs,
+                c_cls=c_cls,
+                exposed=exposed,
+            )
 
     # State
-    @abstractmethod
+    #@abstractmethod
     def is_alive(self) -> bool:
         pass
 
     # Execution
-    @abstractmethod
+    #@abstractmethod
     async def execute_remote(self, name, args=(), kwargs={}) -> Any:
         pass
 

@@ -20,7 +20,7 @@ from contextlib import contextmanager
 # Local Packages #
 from ...baseprocessingcontext import BaseProcessingContext
 from ...contextualobject import ContextualObject
-from .lockinterface import LockInterface
+from ...interfaces import LockInterface
 
 
 # Definitions #
