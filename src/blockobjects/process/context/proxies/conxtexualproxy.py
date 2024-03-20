@@ -13,22 +13,22 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from abc import abstractmethod
 from collections.abc import Iterable, Generator
 from typing import Any, ClassVar
 
 # Third-Party Packages #
 from baseobjects.typing import AnyCallable
+from baseobjects.operations import iter_public_method_names
 
 # Local Packages #
-from ..baseprocessingcontext import BaseProcessingContext
-from ..contextualobject import ContextualObject
+from ..bases import BaseProcessingContext
+from ..contextualobject import ContextualObjectInterface
 from ..interfaces import ProxyInterface
 
 
 # Definitions #
 # Classes #
-class ContextualProxy(ContextualObject, ProxyInterface):
+class ContextualProxy(ContextualObjectInterface, ProxyInterface):
 
     # Class Attributes
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
@@ -38,19 +38,11 @@ class ContextualProxy(ContextualObject, ProxyInterface):
 
     # Class Methods
     @classmethod
-    def iter_method_names(cls, obj) -> Generator[str, None, None]:
-        return (name for name in dir(obj) if callable(getattr(obj, name)))
-
-    @classmethod
-    def iter_public_method_names(cls, obj) -> Generator[str, None, None]:
-        return (name for name in cls.iter_method_names(obj) if name[0] != '_')
-
-    @classmethod
     def get_exposed(cls, target_cls: type, exposed: Iterable[str] | None = None) -> set[str]:
-        public_methods = set(cls.iter_public_method_names(target_cls))
+        public_methods = set(iter_public_method_names(target_cls))
         exposed = set(exposed or ())
-        c_exposed = set(getattr(target_cls, "exposed", ()))
-        c_unexposed = set(getattr(target_cls, "unexposed", ()))
+        c_exposed = set(getattr(target_cls, "exposed", ())) | set(getattr(target_cls, "_exposed_", ()))
+        c_unexposed = set(getattr(target_cls, "unexposed", ())) | set(getattr(target_cls, "_unexposed_", ()))
         p_exposed = cls._exposed_
         p_unexposed = cls._unexposed_
         return (public_methods | exposed | c_exposed | p_exposed) - c_unexposed - p_unexposed
@@ -110,6 +102,7 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         return proxy_type(cls=target_cls, args=args, kwargs=kwargs, exposed=exposed, **_kwargs)
 
     # Attributes #
+    __context: BaseProcessingContext | None = None
     _proxy: ProxyInterface | None = None
 
     # Magic Methods #
@@ -133,7 +126,7 @@ class ContextualProxy(ContextualObject, ProxyInterface):
 
         # Object Construction #
         if init:
-            self.construct(
+            self.__construct(
                 proxy=proxy,
                 cls=cls,
                 args=args,
@@ -145,7 +138,7 @@ class ContextualProxy(ContextualObject, ProxyInterface):
 
     # Instance Methods #
     # Constructors/Destructors
-    def construct(
+    def __construct(
         self,
         proxy: ProxyInterface | None = None,
         cls=None,
@@ -161,13 +154,16 @@ class ContextualProxy(ContextualObject, ProxyInterface):
         Args:
             context: The context of this Queue.
         """
+        if context is not None:
+            self.__context = context
+
         if proxy is not None:
             self._proxy = proxy
 
-        super().construct(context=context)
+        super().construct()
 
         if self._proxy is None and context is not None:
-            self._proxy = self.context.create_proxy(
+            self._proxy = self.__context.create_proxy(
                 name=str(id(self)),
                 cls=cls,
                 args=args,
@@ -176,25 +172,19 @@ class ContextualProxy(ContextualObject, ProxyInterface):
                 exposed=exposed,
             )
 
-    # State
-    #@abstractmethod
-    def is_alive(self) -> bool:
-        pass
-
-    # Execution
-    #@abstractmethod
-    async def execute_remote(self, name, args=(), kwargs={}) -> Any:
-        pass
-
     # Context
-    def set_context(self, context: BaseProcessingContext) -> None:
+    def __set_context(self, context: BaseProcessingContext) -> None:
         """Sets the context of this object to the given context.
 
         Args:
             context: The context to assign this object to.
         """
-        super().set_context(context=context)
+        self.__context = context
 
-        # Create a new queue and move the contents to the new queue
+        # Create a new server and proxy
         new_proxy = context.require_proxy(name=str(id(self)))
         self._proxy = new_proxy
+
+    # State
+    def _is_alive(self) -> bool:
+        return self._proxy is not None and self._proxy._is_alive()

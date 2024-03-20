@@ -38,6 +38,10 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
         dispatch(conn, None, 'decref', (token.id,))
         return proxy
 
+    # State
+    def _is_alive(self) -> bool:
+        return True
+
     def _parse_result(self, result):
         kind, item = result
         match kind:

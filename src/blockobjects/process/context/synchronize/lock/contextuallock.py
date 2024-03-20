@@ -18,14 +18,14 @@ from contextlib import contextmanager
 # Third-Party Packages #
 
 # Local Packages #
-from ...baseprocessingcontext import BaseProcessingContext
-from ...contextualobject import ContextualObject
+from src.blockobjects.process.context.bases.baseprocessingcontext import BaseProcessingContext
+from ...contextualobject import BaseContextualObject
 from ...interfaces import LockInterface
 
 
 # Definitions #
 # Classes #
-class ContextualLock(ContextualObject, LockInterface):
+class ContextualLock(BaseContextualObject, LockInterface):
     """An object that wraps a lock created by a context object and can switch between multiple contexts.
 
     Attributes:

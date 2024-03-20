@@ -18,14 +18,14 @@ from typing import Any
 # Third-Party Packages #
 
 # Local Packages #
-from ..baseprocessingcontext import BaseProcessingContext
-from ..contextualobject import ContextualObject
+from src.blockobjects.process.context.bases.baseprocessingcontext import BaseProcessingContext
+from ..contextualobject import BaseContextualObject
 from ..interfaces import QueueInterface
 
 
 # Definitions #
 # Classes #
-class ContextualQueue(ContextualObject, QueueInterface):
+class ContextualQueue(BaseContextualObject, QueueInterface):
     """An object that wraps a queue created by a context object and can switch between multiple contexts.
 
     Attributes:

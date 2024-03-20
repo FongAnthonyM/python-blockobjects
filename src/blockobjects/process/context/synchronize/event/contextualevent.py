@@ -17,14 +17,14 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ...baseprocessingcontext import BaseProcessingContext
-from ...contextualobject import ContextualObject
+from src.blockobjects.process.context.bases.baseprocessingcontext import BaseProcessingContext
+from ...contextualobject import BaseContextualObject
 from ...interfaces import EventInterface
 
 
 # Definitions #
 # Classes #
-class ContextualEvent(ContextualObject, EventInterface):
+class ContextualEvent(BaseContextualObject, EventInterface):
     """An object that wraps an event created by a context object and can switch between multiple contexts.
 
     Attributes:

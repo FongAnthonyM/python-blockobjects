@@ -13,10 +13,14 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .baseprocessingcontext import BaseProcessingContext
-from .managercontext import ManagerContext, DEFAULT_PROCESS_CONTEXT
-from .contextualobject import ContextualObject
+from .bases import *
+from .contextualobject import *
 from .interfaces import *
 from .synchronize import *
 from .queues import *
 from .proxies import *
+from .contexts import *
+
+
+# Defaults #
+DEFAULT_PROCESS_CONTEXT = ManagerContext()

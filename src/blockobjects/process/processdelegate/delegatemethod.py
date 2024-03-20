@@ -18,19 +18,18 @@ from typing import Any
 from baseobjects.functions import BaseDecorator
 
 # Local Packages #
-from .processdelegate import ProcessDelegate
 
 
 # Definitions #
 # Classes #
 class delegatemethod(BaseDecorator):
     # Attributes #
-    wrapper_method: str = "delegate_call"
+    _wrapper_method: str = "delegate_call"
 
     # Instance Methods #
     # Calling
-    def delegate_call(self, obj: ProcessDelegate, *args: Any, **kwargs: Any) -> Any:
-        """Delegates a function call of an object to its corresponding remote executor if it exists.
+    def local_call(self, obj: "ProcessDelegate", *args: Any, **kwargs: Any) -> Any:
+        """Delegates a function call of an object to the local execution.
 
         Args:
             obj: The object whose function call will be delegated.
@@ -40,10 +39,23 @@ class delegatemethod(BaseDecorator):
         Returns:
             The result of the function call.
         """
-        if obj.is_remote:
-            if (remote_process := obj.remote_process) is not None and remote_process.is_alive():
-                return obj.remote_process.execute_remote(self.__name__, args, kwargs)
+        return self._func_(obj, *args, **kwargs)
+
+    def delegate_call(self, obj: "ProcessDelegate", *args: Any, **kwargs: Any) -> Any:
+        """Delegates a function call of an object to its corresponding remote server if it exists.
+
+        Args:
+            obj: The object whose function call will be delegated.
+            *args: The arguments of function call being delegated.
+            **kwargs: The keyword arguments of function call being delegated.
+
+        Returns:
+            The result of the function call.
+        """
+        if obj.is_proxy():
+            if (proxy := obj._proxy) is not None and proxy._is_alive():
+                return getattr(proxy, self.__name__)(*args, **kwargs)
             else:
-                raise RuntimeError("Remote process must be alive")
+                raise RuntimeError("Server process must be alive")
         else:
             return self._func_(obj, *args, **kwargs)

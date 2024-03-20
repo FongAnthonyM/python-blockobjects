@@ -2,7 +2,7 @@
 A context which manages multiple contexts and delegates its context functionality to a selected context.
 """
 # Package Header #
-from ...header import *
+from src.blockobjects.header import *
 
 # Header #
 __author__ = __author__
@@ -14,16 +14,15 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from typing import Any
-from weakref import ref
 
 # Third-Party Packages #
 
 # Local Packages #
-from .baseprocessingcontext import BaseProcessingContext
-from .interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
-from .synchronize import ContextualLock, ContextualEvent
-from .queues import ContextualQueue, ContextualSimpleQueue
-from .proxies import ContextualProxy
+from ..bases import BaseProcessingContext
+from ..interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
+from ..synchronize import ContextualLock, ContextualEvent
+from ..queues import ContextualQueue, ContextualSimpleQueue
+from ..proxies import ContextualProxy
 
 
 # Definitions #
@@ -51,7 +50,7 @@ class ManagerContext(BaseProcessingContext):
     event_type: type[ContextualEvent] = ContextualEvent
     queue_type: type[ContextualQueue] = ContextualQueue
     simple_queue_type: type[ContextualSimpleQueue] = ContextualSimpleQueue
-    proxy_type = ContextualProxy
+    proxy_type: type[ContextualProxy] = ContextualProxy
 
     contexts: dict[str, BaseProcessingContext] = {}
     context: BaseProcessingContext | None = None
@@ -220,6 +219,3 @@ class ManagerContext(BaseProcessingContext):
             **({"context": self.context} | _kwargs),
         )
 
-
-# Constants #
-DEFAULT_PROCESS_CONTEXT = ManagerContext()

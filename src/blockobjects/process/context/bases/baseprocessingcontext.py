@@ -2,7 +2,7 @@
  multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
 """
 # Package Header #
-from ...header import *
+from src.blockobjects.header import *
 
 # Header #
 __author__ = __author__
@@ -20,7 +20,7 @@ from weakref import ref
 from baseobjects import BaseObject
 
 # Local Packages #
-from .interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
+from src.blockobjects.process.context.interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
 
 
 # Definitions #
@@ -64,6 +64,27 @@ class BaseProcessingContext(BaseObject):
         # Object Construction #
         if init:
             self.construct()
+
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = self.__dict__.copy()
+        state["object_register"] = tuple(k for k in self.object_register.keys())
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Builds this object based on a dictionary of corresponding attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        object_categories = state.pop("object_register")
+        self.__dict__.update(state)
+        self.object_register = {n: {} for n in object_categories}
 
     # Instance Methods #
     # Constructors/Destructors

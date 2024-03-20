@@ -1,8 +1,6 @@
 """ multiprocessingcontext.py.py
 
 """
-from multiprocessing.managers import BaseManager
-
 # Package Header #
 from ...header import *
 
@@ -15,6 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from typing import Any
 from weakref import ref
 
 # Third-Party Packages #
@@ -64,6 +63,27 @@ class MultiProcessingContext(BaseProcessingContext):
         # Object Construction #
         if init:
             self.construct()
+
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        del state["managers"], state["proxy_register"]
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Builds this object based on a dictionary of corresponding attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        super().__setstate__(state)
+        self.managers = {}
+        self.proxy_register = {}
 
     # Instance Methods #
     # Proxies
