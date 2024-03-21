@@ -14,7 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from collections.abc import Iterable
-from typing import Any
+from typing import ClassVar, Any
 
 # Third-Party Packages #
 from baseobjects import BaseDict
@@ -23,6 +23,7 @@ from baseobjects import BaseDict
 from .baseio import IOMap, BaseIO
 from .baseiomultiplexer import BaseIOMultiplexer
 from .iocontainer import IOContainer
+from .iodelegator import IODelegator
 
 
 # Definitions #
@@ -33,11 +34,11 @@ class IOManager(BaseDict, BaseIOMultiplexer):
     Class Attributes:
         default_get: The default name of the method to use for getting.
         default_put: The default name of the method to use for putting.
-        default_io: The default IO object type to populate this object when constructed.
 
     Attributes:
         get: The method multiplexer which manages which get method to run when called.
         put: The method multiplexer which manages which get method to run when called.
+        default_io: The default IO object type to populate this object when constructed.
 
     Args:
         io_: The input/outputs to be managed.
@@ -45,41 +46,67 @@ class IOManager(BaseDict, BaseIOMultiplexer):
         init: Determines if this object will construct.
         **kwargs: Keyword arguments for inheritance.
     """
-    default_get: str | None = "get_all"
-    default_put: str | None = "put_all"
+    # Class Attributes #
+    default_get: ClassVar[str | None] = "get_all"
+    default_put: ClassVar[str | None] = "put_all"
+
+    # Attributes #
     default_io: type[BaseIO] = IOContainer
+    order: list[str, ...]
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(
         self,
         io_: dict[str, BaseIO | None] | None = None,
+        names: Iterable[str] | None = None,
         *args: Any,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
+        # Attributes #
+        self.order = []
+
         # Parent Attributes #
         super().__init__(*args, **kwargs)
 
         # Construction #
         if init:
-            self.construct(io_=io_, *args, **kwargs)
+            self.construct(io_, names, *args, **kwargs)
+
+    # Set Item
+    def __setitem__(self, key: str, item: BaseIO) -> None:
+        """Sets an IO within this manager. If an existing IO is an IODelegator, set it to
+
+        Args:
+            key: The name of the IO to set.
+            item: The IO object to set.
+        """
+        if (io_object := self.data.get(key, None)) is not None and isinstance(io_object, IODelegator):
+            io_object.io = item
+        else:
+            self.data[key] = item
 
     # Instance Methods #
     # Constructors/Destructors
     def construct(
         self,
         io_: dict[str, BaseIO | None] | None = None,
+        names: Iterable[str] | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         """Constructs this object.
 
         Args:
-            io_: The input/outputs to be managed
+            io_: The input/outputs to be managed.
+            names: The names of IO to create and manage.
             *args: Arguments for inheritance.
             **kwargs: Keyword arguments for inheritance.
         """
+        if names is not None:
+            self.create_io(name=names)
+
         if io_ is not None:
             self.update_io(io_)
 
@@ -119,40 +146,78 @@ class IOManager(BaseDict, BaseIOMultiplexer):
             name = (name,)
 
         for n in name:
+            if n not in self.data:
+                self.order.append(name)
             self.data[n] = type_(*args, **kwargs)
+
+    # Ordering
+    def ordered_to_dict(self, ordered: Iterable[Any]) -> dict[str, Any]:
+        """Creates a dictionary from an ordered iterable based on the order of this IO.
+
+        Args:
+            ordered: The ordered iterable to create a dictionary from.
+
+        Returns:
+            The dictionary of the ordered items.
+        """
+        return dict(zip(self.order, ordered))
+
+    def dict_to_ordered(self, dict_: dict[str, Any]) -> tuple[Any, ...]:
+        """Creates an ordered tuple from dictionary based on the order of this IO.
+
+        Args:
+            dict_: The dictionary to create an ordered tuple from.
+
+        Returns:
+            The tuple of the ordered items.
+        """
+        return tuple(dict_.get(name) for name in self.order)
 
     # Get
     def get_item(self, name: str, **kwargs: Any) -> Any:
-        """Gets a value from this IO object.
+        """Gets an item from the requested IO object.
 
         Args:
-            name: The names of the items to get from this IO object.
+            name: The name of tje IO object to get an item from.
+            **kwargs: The keyword arguments for getting the item from the requested IO object.
 
         Returns:
-            The all items.
+            The requested item.
         """
         return self.data[name].get(name=name, **kwargs)
 
-    def get_items(self, names: Iterable[str, ...], **kwargs: Any) -> Any:
-        """Gets multiple values from this IO object.
+    def get_items(self, names: Iterable[str, ...], **kwargs: Any) -> tuple[Any, ...]:
+        """Gets items from multiple IO objects.
 
         Args:
-            names: The names of the items to get from this IO object.
+            names: The names of the IO objects to get items from.
+            **kwargs: The keyword arguments for getting items from the requested IO objects.
 
         Returns:
-            The all items.
+            The requested items.
         """
         return tuple(self.data[name].get(name=name, **kwargs) for name in names)
 
-    def get_all(self, *args, **kwargs) -> dict[str, Any]:
-        """Gets all items from the IO object.
+    def get_ordered(self, **kwargs: Any) -> tuple[Any, ...]:
+        """Gets items from all IO objects in order.
 
         Args:
-            *args: The arguments to use to get from the contained objects.
-            **kwargs: The keyword arguments to use to get from the contained objects.
+            **kwargs: The keyword arguments for getting items from the requested IO objects.
 
         Returns:
-            The all items in the IO objects.
+            Items from all IO objects in order.
+        """
+        return tuple(self.data[name].get(name=name, **kwargs) for name in self.order)
+
+    def get_all(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Gets items from all IO objects organized in a dictionary.
+
+        Args:
+            *args: The arguments for getting items from the requested IO objects.
+            **kwargs: The keyword arguments for getting items from the requested IO objects.
+
+        Returns:
+            Items from all IO objects organized in a dictionary.
         """
         return {k: v.get(*args, **kwargs) for k, v in self.data.items()}
 
@@ -165,6 +230,15 @@ class IOManager(BaseDict, BaseIOMultiplexer):
             value: The keyword arguments of the put of the IO object.
         """
         self.data[name].put(**value)
+
+    def put_ordered(self, values: Iterable[Any]) -> None:
+        """Puts given values into their IO objects based on this object's order.
+
+        Args:
+            values: The items to put.
+        """
+        for k, v in zip(self.order, values):
+            self.data[k].put(v)
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.

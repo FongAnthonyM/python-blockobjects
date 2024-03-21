@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from typing import Any
+from typing import ClassVar, Any
 
 # Third-Party Packages #
 from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
@@ -29,25 +29,40 @@ class BaseIOMultiplexer(BaseIO, CallableMultiplexObject):
 
     Class Attributes:
         default_get: The default name of the method to use for getting.
+        default_get_async: The default name of the method to use for asynchronously getting.
+        default_put_async: The default name of the method to use for asynchronously putting.
         default_put: The default name of the method to use for putting.
 
     Attributes:
         get: The method multiplexer which manages which get method to run when called.
-        put: The method multiplexer which manages which get method to run when called.
+        get_async: The method multiplexer which manages which asynchronous get method to run when called.
+        put_async: The method multiplexer which manages which asynchronous putt method to run when called.
+        put: The method multiplexer which manages which put method to run when called.
 
     Args:
         *args: Arguments for inheritance.
         **kwargs: Keyword arguments for inheritance.
     """
-    default_get: str | None = None
-    default_put: str | None = None
+    # Class Attributes #
+    default_get: ClassVar[str | None] = None
+    default_get_async: ClassVar[str | None] = None
+    default_put: ClassVar[str | None] = None
+    default_put_async: ClassVar[str | None] = None
+
+    # Attributes #
+    get: MethodMultiplexer
+    get_async: MethodMultiplexer
+    put: MethodMultiplexer
+    put_async: MethodMultiplexer
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         # New Attributes #
-        self.get: MethodMultiplexer = MethodMultiplexer(instance=self, select=self.default_get)
-        self.put: MethodMultiplexer = MethodMultiplexer(instance=self, select=self.default_put)
+        self.get = MethodMultiplexer(instance=self, select=self.default_get)
+        self.get_async = MethodMultiplexer(instance=self, select=self.default_get_async)
+        self.put = MethodMultiplexer(instance=self, select=self.default_put)
+        self.put_async = MethodMultiplexer(instance=self, select=self.default_put_async)
 
         # Parent Attributes #
         super().__init__(*args, **kwargs)

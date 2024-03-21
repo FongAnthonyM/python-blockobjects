@@ -37,7 +37,7 @@ class BaseIO(BaseObject):
 
     # Instance Methods #
     # Get
-    def get(self, *args, **kwargs) -> Any:
+    def get(self, *args: Any, **kwargs: Any) -> Any:
         """Gets the requested item.
 
         Args:
@@ -49,12 +49,34 @@ class BaseIO(BaseObject):
         """
         raise NotImplementedError
 
+    async def get_async(self, *args: Any, **kwargs: Any) -> Any:
+        """Asynchronously gets the requested item.
+
+        Args:
+            *args: The arguments for getting the item.
+            **kwargs: The keyword arguments for getting the item.
+
+        Returns:
+            The requested item.
+        """
+        raise NotImplementedError
+
     # Put
-    def put(self, value: Any, *args, **kwargs) -> Any:
+    def put(self, value: Any, *args: Any, **kwargs: Any) -> Any:
         """Puts the requested item.
 
         Args:
             value: The value to put into this object.
+            *args: The arguments for putting the item.
+            **kwargs: The keyword arguments for putting the item.
+        """
+        raise NotImplementedError
+
+    async def put_async(self, value: Any, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously puts the requested item.
+
+        Args:
+            value: The object to put into this object.
             *args: The arguments for putting the item.
             **kwargs: The keyword arguments for putting the item.
         """
