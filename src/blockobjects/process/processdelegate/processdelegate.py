@@ -41,8 +41,11 @@ class ProcessDelegate(BaseContextualObject):
     # Class Attributes #
     _exposed_: ClassVar[set] = set()
     exposed: ClassVar[set] = set()
+    public_exposed: ClassVar[bool] = True
+
     _unexposed_: ClassVar[set] = {"is_proxy", "is_alive",  "get_context", "set_context"}
     unexposed: ClassVar[set] = set()
+
     _local_: ClassVar[set] = {"stop_server", "set_server_state", "update", "update_server"}
 
     # Class Methods #
@@ -53,7 +56,7 @@ class ProcessDelegate(BaseContextualObject):
         Returns:
             The set of exposed method names.
         """
-        public_methods = set(iter_public_method_names(cls))
+        public_methods = set(iter_public_method_names(cls)) if cls.public_exposed else set()
         return (public_methods | cls.exposed | cls._exposed_) - cls.unexposed - cls._unexposed_
 
     def __init_subclass__(cls, **kwargs):

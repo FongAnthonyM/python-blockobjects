@@ -1,5 +1,5 @@
-""" queue.py
-
+""" ioqueue.py
+An IO object which stores values within it using a queue
 """
 # Package Header #
 from ...header import *
@@ -17,13 +17,12 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ...process.context import BaseProcessingContext, DEFAULT_PROCESS_CONTEXT
-from ...process.context import ContextualQueue
+
+from ...process import ContextualQueue
+from ..base import BaseIO
 
 
 # Definitions #
 # Classes #
-class Queue(ContextualQueue):
-    """"""
-    default_context: BaseProcessingContext = DEFAULT_PROCESS_CONTEXT
-
+class IOQueue(ContextualQueue, BaseIO):
+    """An IO object which stores values within it using a queue."""

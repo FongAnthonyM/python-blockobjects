@@ -38,9 +38,10 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
         context: The context of this Queue.
         init: Determines if this object will construct.
     """
+
     # Attributes #
     queue: QueueInterface | None = None
-    space_wait: bool
+    space_wait: bool = False
 
     # Magic Methods #
     # Construction/Destruction
@@ -53,7 +54,6 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
         init: bool = True,
     ) -> None:
         # Attributes #
-        self.space_wait: bool = space_wait
 
         # Parent Attributes #
         super().__init__(init=False)
@@ -78,6 +78,9 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
             space_wait: Determines if this queue will wait for the queue space to enqueue an item.
             context: The context of this Queue.
         """
+        if space_wait is not None:
+            self.space_wait = space_wait
+
         super().construct(context=context)
 
         if context is not None:

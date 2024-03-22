@@ -24,3 +24,4 @@ from .contexts import *
 
 # Defaults #
 DEFAULT_PROCESS_CONTEXT = ManagerContext()
+BaseContextualObject._context = DEFAULT_PROCESS_CONTEXT

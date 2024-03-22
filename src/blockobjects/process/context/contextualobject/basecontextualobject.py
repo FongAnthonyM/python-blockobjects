@@ -33,6 +33,7 @@ class BaseContextualObject(ContextualObjectInterface):
         context: The context to assign this object to.
         init: Determines if this object will construct.
     """
+
     # Attributes #
     _context: BaseProcessingContext | None = None
 

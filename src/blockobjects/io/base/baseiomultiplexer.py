@@ -2,7 +2,7 @@
 An abstract class for IO Objects which use MethodMultiplexer for the get and put methods.
 """
 # Package Header #
-from ..header import *
+from src.blockobjects.header import *
 
 # Header #
 __author__ = __author__
@@ -43,6 +43,7 @@ class BaseIOMultiplexer(BaseIO, CallableMultiplexObject):
         *args: Arguments for inheritance.
         **kwargs: Keyword arguments for inheritance.
     """
+
     # Class Attributes #
     default_get: ClassVar[str | None] = None
     default_get_async: ClassVar[str | None] = None

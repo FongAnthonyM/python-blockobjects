@@ -2,7 +2,7 @@
 An abstract class for IO objects.
 """
 # Package Header #
-from ..header import *
+from src.blockobjects.header import *
 
 # Header #
 __author__ = __author__
@@ -29,7 +29,7 @@ class IOMap(NamedTuple):
     name: str
     type: Optional[type] = None
     object: Optional["BaseIO"] = None
-    links: dict[str, "IOInformation"] | None = None
+    links: dict[str, "IOMap"] | None = None
 
 
 class BaseIO(BaseObject):
