@@ -17,12 +17,14 @@ from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, is
 from asyncio.events import AbstractEventLoop, get_event_loop
 from abc import abstractmethod
 from collections.abc import Iterable
+from contextlib import contextmanager
 from typing import ClassVar, Any
 from warnings import warn
 
 # Third-Party Packages #
-from baseobjects.functions import MethodMultiplexer
+from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
 from ...process import ProcessDelegate
+from ...process.context import ContextualEvent
 
 # Local Packages #
 from ...io import IOManager
@@ -30,7 +32,7 @@ from ...io import IOManager
 
 # Definitions #
 # Classes #
-class BaseBlock(ProcessDelegate):
+class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     """An abstract class which defines an Operation, an easily definable data processing block with inputs and outputs.
 
     In subclasses the "evaluate" method must be defined as it is data processing element of this object. Additionally,
@@ -70,27 +72,46 @@ class BaseBlock(ProcessDelegate):
     """
     # Class Attributes #
     default_input_names: ClassVar[tuple[str, ...]] = ()
+    default_required_input: ClassVar[tuple[str, ...]] = ()
+    default_optional_input: ClassVar[dict[str, Any]] = {}
     default_output_names: ClassVar[tuple[str, ...]] = ()
 
-    # Attributes #
-    async_event_loop: AbstractEventLoop
-    will_proxy: bool = False
+    init_setup: ClassVar[bool] = True
 
+    # Attributes #
+    # Backend
+    untransmittable = {"loop_event", "inputs", "outputs", "futures"}
+    async_event_loop: AbstractEventLoop
+
+    # State
+    loop_event: ContextualEvent
+    will_proxy: bool = False
+    _is_executing: bool = False
+
+    # IO
     inputs: IOManager
     outputs: IOManager
 
+    format_output: MethodMultiplexer
+
+    # Setup/Evaluate/Teardown
     sets_up: bool = True
     tears_down: bool = True
 
-    setup_kwargs: dict[str, Any]
-    evaluate_kwargs: dict[str, Any]
-    teardown_kwargs: dict[str, Any]
+    setup_kwargs: dict[str, Any] = {}
+    evaluate_kwargs: dict[str, Any] = {}
+    teardown_kwargs: dict[str, Any] = {}
 
     _setup: MethodMultiplexer
-    _task: MethodMultiplexer
+    _evaluate: MethodMultiplexer
     _teardown: MethodMultiplexer
 
-    execute: MethodMultiplexer
+    execute_input: MethodMultiplexer
+    execute_input_async: MethodMultiplexer
+    execute_output: MethodMultiplexer
+    execute_output_async: MethodMultiplexer
+
+    futures: list[Future]
 
     # Magic Methods #
     # Construction/Destruction
@@ -98,25 +119,56 @@ class BaseBlock(ProcessDelegate):
         self,
         *args: Any,
         init_io: bool = True,
-        sets_up: bool = True,
+        init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
         # New Attributes #
         self.async_event_loop = get_event_loop()
+        self.loop_event = ContextualEvent()
 
         self.inputs = IOManager()
         self.outputs = IOManager()
+        self.format_output = MethodMultiplexer(instance=self)
 
-        self.execute = MethodMultiplexer(instance=self, select=self.default_execute)
+        self.setup_kwargs = self.setup_kwargs.copy()
+        self.evaluate_kwargs = self.evaluate_kwargs.copy()
+        self.teardown_kwargs = self.teardown_kwargs.copy()
+
+        self.execute_input = MethodMultiplexer(instance=self)
+        self.execute_input_async = MethodMultiplexer(instance=self)
+        self.execute_output = MethodMultiplexer(instance=self)
+        self.execute_output_async = MethodMultiplexer(instance=self)
+
+        self.futures = []
 
         # Parent Attributes #
         super().__init__(*args, init=False, **kwargs)
 
         # Construct #
         if init:
-            self.construct(*args, init_io=init_io, sets_up=sets_up, setup_kwargs=setup_kwargs, **kwargs)
+            self.construct(*args, init_io=init_io, init_setup=init_setup, setup_kwargs=setup_kwargs, **kwargs)
+
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        del state["async_event_loop"]
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Builds this object based on a dictionary of corresponding attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        super().__setstate__(state)
+        self.async_event_loop = get_event_loop()
 
     # Instance Methods #
     # Constructors/Destructors
@@ -124,7 +176,7 @@ class BaseBlock(ProcessDelegate):
         self,
         *args: Any,
         init_io: bool = True,
-        sets_up: bool = True,
+        init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -133,21 +185,22 @@ class BaseBlock(ProcessDelegate):
         Args:
             *args: Arguments for inheritance.
             init_io: Determines if construct_io run during this construction.
-            sets_up: Determines if setup will run during this construction.
+            init_setup: Determines if setup will run during this construction.
             setup_kwargs: The keyword arguments for the setup method.
             **kwargs: Keyword arguments for inheritance.
         """
         # New Assignment #
-        self.setup_kwargs = setup_kwargs
-
-        # Construct Parent #
-        super().construct(*args, **kwargs)
+        if setup_kwargs is not None:
+            self.setup_kwargs.update(setup_kwargs)
 
         if init_io:
             self.construct_io()
 
-        if sets_up:
+        if init_setup or (init_setup is None and self.init_setup):
             self.setup(**({} if setup_kwargs is None else setup_kwargs))
+
+        # Construct Parent #
+        super().construct(*args, **kwargs)
 
     # State
     def is_executing(self) -> bool:
@@ -156,9 +209,25 @@ class BaseBlock(ProcessDelegate):
         Returns:
             bool: If this object is currently running.
         """
-        return self._executing_event.is_set()
+        return self._is_executing
+
+    @contextmanager
+    def _executing_context_manager(self) -> None:
+        try:
+            self._is_executing = True
+            yield None
+        finally:
+            self._is_executing = False
 
     # IO
+    def one_output(self, output) -> tuple:
+        """Formats an output if was the only output of the block."""
+        return (output,)
+
+    def multiple_outputs(self, output) -> None:
+        """Formats the outputs if of the block."""
+        return output
+
     def construct_io(
         self,
         input_names: str | Iterable[str] | None = None,
@@ -179,16 +248,33 @@ class BaseBlock(ProcessDelegate):
         if output_names is None:
             output_names = self.default_output_names
 
-        self.inputs.create_io(names=input_names, *args, **kwargs)
-        self.outputs.create_io(names=output_names, *args, **kwargs)
+        self.inputs.create_io(name=input_names, *args, **kwargs)
+        self.outputs.create_io(name=output_names, *args, **kwargs)
+
+        self.inputs.required = self.default_required_input
+        self.inputs.optional_defaults.update(self.default_optional_input)
+
+        match len(self.inputs):
+            case 0:
+                self.execute_input.select("_execute_no_input")
+                self.execute_input_async.select("_execute_no_input_async")
+            case _:
+                self.execute_input.select("_execute_input")
+                self.execute_input_async.select("_execute_input_async")
 
         match len(self.outputs.order):
             case 0:
-                self.execute.select("execute_no_outputs")
+                self.execute_output.select("_execute_no_output")
+                self.execute_output_async.select("_execute_no_output_async")
+                self.format_output.select("multiple_outputs")
             case 1:
-                self.execute.select("execute_one_output")
+                self.execute_output.select("_execute_one_output")
+                self.execute_output_async.select("_execute_one_output_async")
+                self.format_output.select("one_output")
             case _:
-                self.execute.select("execute_multiple_outputs")
+                self.execute_output.select("_execute_multiple_outputs")
+                self.execute_output_async.select("_execute_multiple_outputs_async")
+                self.format_output.select("multiple_outputs")
 
     # Setup
     def setup(self, *args: Any, **kwargs: Any) -> None:
@@ -215,53 +301,104 @@ class BaseBlock(ProcessDelegate):
             The result of the evaluation.
         """
 
-    async def evaluate_async(self, *args: Any, **kwargs: Any) -> None:
+    async def evaluate_async(self, *args: Any, **kwargs: Any) -> Any:
         """Asynchronously runs the teardown."""
         if iscoroutinefunction(self.evaluate):
-            await self.evaluate(*args, **(self.teardown_kwargs | kwargs))
+            return await self.evaluate(*args, **(self.teardown_kwargs | kwargs))
         else:
-            self.evaluate(*args, **(self.teardown_kwargs | kwargs))
+            return self.evaluate(*args, **(self.teardown_kwargs | kwargs))
 
-    async def evaluate_loop(self, *args: Any, **kwargs: Any) -> None:
-        """An async loop that executes evaluate consecutively until an event stops it."""
-        # Get the correct method
-        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+    # Execute IO
+    async def _execute_no_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
 
-        # Loop the evaluation
-        while self.loop_evaluation.is_set():
-            try:
-                await create_task(evaluate_method(*args, **kwargs))
-            except InterruptedError:
-                warn("TaskBlock interrupted, if intentional, handle in the task.")
+    async def _execute_no_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    def _execute_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.inputs.get(*args, **kwargs)
+
+    async def _execute_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return await self.inputs.get_async(*args, **kwargs)
+
+    def _execute_no_output(self, *args: Any, **kwargs: Any) -> None:
+        """Executes no output."""
+
+    async def _execute_no_output_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously executes no output."""
+
+    def _execute_one_output(self, output, *args: Any, **kwargs: Any) -> None:
+        """Executes one output."""
+        self.outputs.put_ordered((output,), *args, **kwargs)
+
+    async def _execute_one_output_async(self, output, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously executes one output."""
+        await self.outputs.put_ordered_async((output,), *args, **kwargs)
+
+    def _execute_multiple_outputs(self, output, *args: Any, **kwargs: Any) -> None:
+        """Evaluates from the inputs and puts the multiple results to the outputs."""
+        self.outputs.put_ordered(output, *args, **kwargs)
+
+    async def _execute_multiple_outputs_async(self, output, *args: Any, **kwargs: Any) -> None:
+        """Evaluates from the inputs and puts the multiple results to the outputs."""
+        await self.outputs.put_ordered_async(output, *args, **kwargs)
+
+    def _execute_dict_output(self, output, **kwargs: Any) -> None:
+        """Evaluates from the inputs and puts the output dict directly to the outputs."""
+        self.outputs.put_all(output, **kwargs)
+
+    async def _execute_dict_output_async(self, output, **kwargs: Any) -> None:
+        """Evaluates from the inputs and puts the output dict directly to the outputs."""
+        await self.outputs.put_all_async(output, **kwargs)
 
     # Execute
-    def execute_no_output(self) -> None:
-        """Evaluates from the inputs and does not output."""
-        self.evaluate(**self.inputs.get_all())
+    def _execute(self, *args: Any, **kwargs: Any) -> None:
+        self.execute_output(self.evaluate(**self.execute_input()))
 
-    def execute_one_output(self) -> None:
-        """Evaluates from the inputs and puts the single result to the outputs."""
-        self.outputs.put_ordered((self.evaluate(**self.inputs.get_all()),))
+    def execute(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            self._execute(*args, **kwargs)
 
-    def execute_multiple_outputs(self) -> None:
-        """Evaluates from the inputs and puts the multiple results to the outputs."""
-        self.outputs.put_ordered(self.evaluate(**self.inputs.get_all()))
+    async def _execute_async(self, *args: Any, **kwargs: Any) -> None:
+        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+        await self.execute_output_async(await evaluate_method(**await self.execute_input_async()))
 
-    def execute_dict_output(self) -> None:
-        """Evaluates from the inputs and puts the output dict directly to the outputs."""
-        self.outputs.put_all(self.evaluate(**self.inputs.get_all()))
+    async def execute_async(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            await self._execute_async(*args, **kwargs)
 
-    async def execution_loop(self, *args: Any, **kwargs: Any) -> None:
+    def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
+        while self.loop_event.is_set():
+            # Get Inputs
+            inputs = self.execute_input_async()
+            if any((inputs[n]) for n in self.inputs.required):
+                self.loop_event.clear()
+                continue
+
+            # Evaluate
+            output = self.evaluate(**inputs)
+
+            # Outputs
+            self.execute_output_async(output)
+
+    async def _execution_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively until an event stops it."""
         # Get the correct method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
 
         # Loop the evaluation
-        while self.loop_evaluation.is_set():
-            try:
-                await create_task(evaluate_method(*args, **kwargs))
-            except InterruptedError:
-                warn("TaskBlock interrupted, if intentional, handle in the task.")
+        while self.loop_event.is_set():
+            # Get Inputs
+            inputs = await create_task(self.execute_input_async())
+            if any((inputs[n] is self.inputs.break_sentinel) for n in self.inputs.required):
+                self.loop_event.clear()
+                continue
+
+            # Evaluate
+            output = await create_task(evaluate_method(**inputs))
+
+            # Outputs
+            await create_task(self.execute_output_async(output))
 
     # Teardown
     def teardown(self, *args: Any, **kwargs: Any) -> None:
@@ -279,240 +416,230 @@ class BaseBlock(ProcessDelegate):
     async def _run(
         self,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Executes a single run of the task.
+        """Runs a single execution of the block.
 
         Args:
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
         # Flag On
-        self._alive_event.set()
+        with self._executing_context_manager():
+            # Optionally Setup
+            if self.sets_up:
+                await self.setup_async(**(s_kwargs or {}))
 
-        # Optionally Setup
-        if self.sets_up:
-            await self.setup_async(**(s_kwargs or {}))
+            # Run one Execution
+            await self._execute_async(**(e_kwargs or {}))
 
-        # Run TaskBlock
-        if self._task.is_coroutine:
-            await self._task(**(self.task_kwargs | (t_kwargs or {})))
-        else:
-            await self.task_async(**(self.task_kwargs | (t_kwargs or {})))
+            # Optionally Teardown
+            if self.tears_down:
+                await self.teardown_async(**(t_kwargs or {}))
 
-        # Optionally Teardown
-        if self.tears_down:
-            await self.teardown_async(**(d_kwargs or {}))
-
-        # Wait for any remaining Futures
-        for future in self.futures:
-            await future
-
-        # Flag Off
-        self._alive_event.clear()
+            # Wait for any remaining Futures
+            for future in self.futures:
+                await future
 
     def _run_async_loop(
         self,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Executes a single run of the task.
+        """Runs a single execution of the block using the async event loop.
 
         Args:
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
-        run(self._run(s_kwargs=s_kwargs, t_kwargs=t_kwargs, d_kwargs=d_kwargs))
-
-    async def run_async(
-        self,
-        is_process: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Executes a single async run of the task and delegates to another process is selected.
-
-        Args:
-            is_process: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
-        """
-        # Raise Error if the task is already running.
-        if self._alive_event.is_set():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Set to Alive
-        self._alive_event.set()
-
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
-        # Use Correct Context
-        if self._is_process:
-            self.process.target = self._run_async_loop
-            self.process.kwargs = {"s_kwargs": s_kwargs, "t_kwargs": t_kwargs, "d_kwargs": d_kwargs}
-            self.process.start()
-        else:
-            await self._run(s_kwargs, t_kwargs, d_kwargs)
+        run(self._run(s_kwargs, e_kwargs, t_kwargs))
 
     def run(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
     ) -> Future | None:
-        """Executes a single run of the task and delegates to another process is selected.
+        """Runs a single execution of the block, delegating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
         # Raise Error if the task is already running.
-        if self._alive_event.is_set():
-            raise RuntimeError(f"{self} is already executing.")
-
-        # Set to Alive
-        self._alive_event.set()
+        if self.is_executing():
+            raise RuntimeError(f"{self} task is already running.")
 
         # Run as Proxy
         if as_proxy or (as_proxy is None and self.will_proxy):
             if not self.is_alive():
                 self._start_server()
-            self._proxy.run()
+            self._proxy.run(s_kwargs, e_kwargs, t_kwargs)
         elif self.async_event_loop.is_running():
-            return run_coroutine_threadsafe(self._run(s_kwargs, t_kwargs, d_kwargs), self.async_event_loop)
+            return run_coroutine_threadsafe(self._run(s_kwargs, e_kwargs, t_kwargs), self.async_event_loop)
         else:
-            self._run_async_loop(s_kwargs, t_kwargs, d_kwargs)
+            self._run_async_loop(s_kwargs, e_kwargs, t_kwargs)
 
-    # Start Block Loop
+    async def run_async(
+        self,
+        as_proxy: bool | None = None,
+        s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
+        t_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Asynchronously runs a single execution of the block, delegating to another process if selected.
+
+        Args:
+            as_proxy: Determines if this object should run in a separate process.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
+        """
+        # Raise Error if the task is already running.
+        if self.is_executing():
+            raise RuntimeError(f"{self} task is already running.")
+
+        # Use Correct Context
+        if as_proxy or (as_proxy is None and self.will_proxy):
+            if not self.is_alive():
+                self._start_server()
+            await self._proxy.run_async(s_kwargs, e_kwargs, t_kwargs)
+        else:
+            await self._run(s_kwargs, e_kwargs, t_kwargs)
+
+    # Start Block Continuous
     async def _start(
         self,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Starts the continuous execution of the task.
+        """Starts the continuous execution of the block.
 
         Args:
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
         # Flag On
-        self._alive_event.set()
-        self.loop_event.set()
+        with self._executing_context_manager():
+            self.loop_event.set()
 
-        # Optionally Setup
-        if self.sets_up:
-            await self.setup_async(**(s_kwargs or {}))
+            # Optionally Setup
+            if self.sets_up:
+                await self.setup_async(**(s_kwargs or {}))
 
-        # Loop TaskBlock
-        await self.loop_task(**(self.task_kwargs | (t_kwargs or {})))
+            # Loop TaskBlock
+            await self._execution_loop_async(**(e_kwargs or {}))
 
-        # Optionally Teardown
-        if self.tears_down:
-            await self.teardown_async(**(d_kwargs or {}))
+            # Optionally Teardown
+            if self.tears_down:
+                await self.teardown_async(**(t_kwargs or {}))
 
-        # Wait for any remaining Futures
-        for future in self.futures:
-            await future
-
-        # Flag Off
-        self._alive_event.clear()
+            # Wait for any remaining Futures
+            for future in self.futures:
+                await future
 
     def _start_async_loop(
         self,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Starts the continuous execution of the task in an async run.
+        """Starts the continuous execution of the block in an async run.
 
         Args:
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
-        run(self._start(s_kwargs=s_kwargs, t_kwargs=t_kwargs, d_kwargs=d_kwargs))
-
-    async def start_async(
-        self,
-        is_process: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Starts the async continuous execution of the task and delegates to another process is selected.
-
-        Args:
-            is_process: Determines if this object should start in a separate process.
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
-        """
-        # Raise Error if the task is already running.
-        if self._alive_event.is_set():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Set to Alive
-        self._alive_event.set()
-
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
-
-        # Use Correct Context
-        if self._is_process:
-            self.process.target = self._start_async_loop
-            self.process.kwargs = {"s_kwargs": s_kwargs, "t_kwargs": t_kwargs, "d_kwargs": d_kwargs}
-            self.process.start()
-        else:
-            await self._start(s_kwargs, t_kwargs, d_kwargs)
+        run(self._start(s_kwargs, e_kwargs, t_kwargs))
 
     def start(
         self,
-        is_process: bool | None = None,
+        as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-        d_kwargs: dict[str, Any] | None = None,
-    ) -> Task | None:
-        """Starts the continuous execution of the task and delegates to another process is selected.
+    ) -> Future | None:
+        """Starts the continuous execution of the block, delegating to another process if selected.
 
         Args:
-            is_process: Determines if this object should start in a separate process.
-            s_kwargs: The keyword arguments for task setup.
-            t_kwargs: The keyword arguments for the task.
-            d_kwargs: The keyword arguments for task teardown.
+            as_proxy: Determines if this object should run in a separate process.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
         """
         # Raise Error if the task is already running.
-        if self._alive_event.is_set():
+        if self.is_executing():
             raise RuntimeError(f"{self} task is already running.")
 
-        # Set to Alive
-        self._alive_event.set()
+        # Run as Proxy
+        if as_proxy or (as_proxy is None and self.will_proxy):
+            if not self.is_alive():
+                self._start_server()
+            self._proxy.start(s_kwargs, e_kwargs, t_kwargs)
+        elif self.async_event_loop.is_running():
+            return run_coroutine_threadsafe(self._start(s_kwargs, e_kwargs, t_kwargs), self.async_event_loop)
+        else:
+            self._start_async_loop(s_kwargs, e_kwargs, t_kwargs)
 
-        # Set separate process
-        if is_process is not None:
-            self._is_process = is_process
+    async def start_async(
+        self,
+        as_proxy: bool | None = None,
+        s_kwargs: dict[str, Any] | None = None,
+        e_kwargs: dict[str, Any] | None = None,
+        t_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
+
+        Args:
+            as_proxy: Determines if this object should run in a separate process.
+            s_kwargs: The keyword arguments for block setup.
+            e_kwargs: The keyword arguments for block execution.
+            t_kwargs: The keyword arguments for block teardown.
+        """
+        # Raise Error if the task is already running.
+        if self.is_executing():
+            raise RuntimeError(f"{self} task is already running.")
 
         # Use Correct Context
-        if self._is_process:
-            self.process.target = self._start_async_loop
-            self.process.kwargs = {"s_kwargs": s_kwargs, "t_kwargs": t_kwargs, "d_kwargs": d_kwargs}
-            self.process.start()
-            return
-        elif self.async_event_loop is not None:
-            return create_task(self._start(s_kwargs, t_kwargs, d_kwargs))
+        if as_proxy or (as_proxy is None and self.will_proxy):
+            if not self.is_alive():
+                self._start_server()
+            await self._proxy.start_async(s_kwargs, e_kwargs, t_kwargs)
         else:
-            self._start_async_loop(s_kwargs, t_kwargs, d_kwargs)
-            return
+            await self._start(s_kwargs, e_kwargs, t_kwargs)
+
+    def _stop(self, server: bool = True, update: bool = True) -> None:
+        """Stops the remote server relative to this object.
+
+        Args:
+            server: Determines if the remote server should be stopped.
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        self.loop_event.clear()
+        self.inputs.put_break_sentinel()
+        if self.is_alive() and server:
+            self._stop_server(update)
+
+    def stop(self, server: bool = True, update: bool = True) -> None:
+        """Stops a remote server. If called multiple times, it will recursively stop the deepest server.
+
+        Args:
+            server: Determines if the remote server should be stopped.
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        self.loop_event.clear()
+        self.inputs.put_break_sentinel()
+        if self.is_alive() and server:
+            self._stop_server(update)
+
+    # Proxy

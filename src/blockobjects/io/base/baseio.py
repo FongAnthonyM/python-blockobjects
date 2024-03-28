@@ -35,7 +35,19 @@ class IOMap(NamedTuple):
 class BaseIO(BaseObject):
     """An abstract class for IO objects."""
 
+    # Attributes #
+    empty_sentinel: object = object()
+
     # Instance Methods #
+    # State
+    def empty(self) -> bool:
+        """Returns True if the IO object is empty, False otherwise."""
+        raise NotImplementedError
+
+    def poll(self) -> bool:
+        """Returns True if the IO object has something in it, False otherwise."""
+        raise NotImplementedError
+
     # Get
     def get(self, *args: Any, **kwargs: Any) -> Any:
         """Gets the requested item.

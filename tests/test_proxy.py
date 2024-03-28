@@ -23,7 +23,8 @@ from os import getpid
 import pytest
 
 # Local Packages #
-from src.blockobjects.process.context import ManagerContext, DEFAULT_PROCESS_CONTEXT
+from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
+from src.blockobjects.process.context import ManagerContext
 from .test_bases import ClassTest
 
 

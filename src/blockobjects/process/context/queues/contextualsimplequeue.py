@@ -44,7 +44,7 @@ class ContextualSimpleQueue(BaseContextualObject, QueueInterface):
         """
         super().construct(context=context)
 
-        if context is not None:
+        if self.context is not None:
             self.queue = self.context.require_simple_queue(name=str(id(self)))
 
     # Context

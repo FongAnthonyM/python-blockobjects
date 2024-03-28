@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import ClassVar, Any
 
 # Third-Party Packages #
+from baseobjects import search_sentinel
 
 # Local Packages #
 from ...context import QueueInterface
@@ -89,8 +90,20 @@ class MultiProcessingQueue(Queue, QueueInterface):
         self.__dict__.update(state[1])
 
     # Instance Methods #
-    # Queue
-    def get(self, block: bool = True, timeout: float | None = None) -> Any:
+    # State
+    def poll(self) -> bool:
+        """Returns True if the queue has something in it, False otherwise."""
+        return self._poll()
+
+    # Get
+    def get(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -152,10 +165,20 @@ class MultiProcessingQueue(Queue, QueueInterface):
             raise InterruptedError
         elif res is not None:
             return ForkingPickler.loads(res)  # Unserialize the data after having released the lock
+        elif default is not search_sentinel:
+            return default
         else:
             raise Empty
 
-    async def get_async(self, block: bool = True, timeout: float | None = None, interval: float = 0.0) -> Any:
+    async def get_async(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Asynchronously gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -220,14 +243,24 @@ class MultiProcessingQueue(Queue, QueueInterface):
             raise InterruptedError
         elif res is not None:
             return ForkingPickler.loads(res)  # Unserialize the data after having released the lock
+        elif default is not search_sentinel:
+            return default
         else:
             raise Empty
 
-    def put(self, obj: Any, block: bool = True, timeout: float | None = None) -> None:
-        """Puts an object into the queue, waits for access to the queue.
+    # Put
+    def put(
+        self,
+        value: Any,
+        block: bool = True,
+        timeout: float | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
             block: Determines if this method will block execution.
             timeout: The time, in seconds, to wait for space in the queue.
 
@@ -238,23 +271,23 @@ class MultiProcessingQueue(Queue, QueueInterface):
         if self._closed:
             raise ValueError(f"Queue {self!r} is closed")
 
-        # Try to put an object without blocking.
+        # Try to put a value without blocking.
         if not block:
-            super().put(obj=obj, block=block, timeout=timeout)
+            super().put(value=value, block=block, timeout=timeout)
             return
 
-        # Try to put an object without timing out.
+        # Try to put a value without timing out.
         elif timeout is None:
             while not self.put_interrupt.is_set():
                 if self._sem.acquire(block=False):
                     with self._notempty:
                         if self._thread is None:
                             self._start_thread()
-                        self._buffer.append(obj)
+                        self._buffer.append(value)
                         self._notempty.notify()
                         return
 
-        # Try to put an object and timing out when specified.
+        # Try to put a value and timing out when specified.
         else:
             deadline = perf_counter() + timeout
             while not self.put_interrupt.is_set():
@@ -262,7 +295,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
                     with self._notempty:
                         if self._thread is None:
                             self._start_thread()
-                        self._buffer.append(obj)
+                        self._buffer.append(value)
                         self._notempty.notify()
                         return
                 if deadline is not None and deadline <= perf_counter():
@@ -271,11 +304,18 @@ class MultiProcessingQueue(Queue, QueueInterface):
         # Interruption leads to an error.
         raise InterruptedError
 
-    async def put_async(self, obj: Any, timeout: float | None = None, interval: float = 0.0) -> None:
-        """Asynchronously puts an object into the queue, waits for access to the queue.
+    async def put_async(
+        self,
+        value: Any,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Asynchronously puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
             timeout: The time, in seconds, to wait for space in the queue.
             interval: The time, in seconds, between each access check.
 
@@ -289,7 +329,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
                     with self._notempty:
                         if self._thread is None:
                             self._start_thread()
-                        self._buffer.append(obj)
+                        self._buffer.append(value)
                         self._notempty.notify()
                         return
 
@@ -301,7 +341,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
                     with self._notempty:
                         if self._thread is None:
                             self._start_thread()
-                        self._buffer.append(obj)
+                        self._buffer.append(value)
                         self._notempty.notify()
                         return
                 if deadline is not None and deadline <= perf_counter():
@@ -312,6 +352,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
         # Interruption leads to an error.
         raise InterruptedError
 
+    # Join
     def join(self) -> None:
         """Blocks until all items in the Queue have been gotten and the registry is updated."""
         while self.qsize() > 0:

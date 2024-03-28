@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from typing import ClassVar, Any
 
 # Third-Party Packages #
+from baseobjects import search_sentinel
 from baseobjects.collections import OrderableDict
 
 # Local Packages #
@@ -27,7 +28,7 @@ from .containers import IOQueue
 
 # Definitions #
 # Classes #
-class IORouter(OrderableDict, BaseIOMultiplexer):
+class IORouter(BaseIOMultiplexer, OrderableDict):
     """An IO object which maps inputs to outputs.
 
     The default functionality is put a single output into multiple inputs.
@@ -55,7 +56,10 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
     default_put_async: ClassVar[str] = "put_to_all_async"
 
     # Attributes #
+    break_sentinel: object = object()
     default_io: type[BaseIO] = IOQueue
+    required: tuple[str] = ()
+    optional_defaults: dict[str, Any] = {}
 
     # Magic Methods #
     # Construction/Destruction
@@ -69,9 +73,10 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
     ) -> None:
         # Attributes #
         self.order = []
+        self.optional_defaults = self.optional_defaults.copy()
 
         # Parent Attributes #
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         # Construction #
         if init:
@@ -150,7 +155,7 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
 
         for n in name:
             if n not in self.data:
-                self.order.append(name)
+                self.order.append(n)
             self.data[n] = type_(*args, **kwargs)
 
     # Ordering
@@ -175,6 +180,55 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
             The tuple of the ordered items.
         """
         return tuple(dict_.get(name) for name in self.order)
+
+    # State
+    def empty_io(self) -> dict[str, bool]:
+        """Checks the IO objects in this object are empty.
+
+        Returns:
+            The result of checking all IO objects in this object.
+        """
+        return {k: v.empty() for k, v in self.data.items()}
+
+    def empty_any(self) -> bool:
+        """Checks if any of the IO objects in this object are empty.
+
+        Returns:
+            Returns True if any of the IO objects are empty, False otherwise.
+        """
+        return any(v.empty() for v in self.data.values())
+
+    def empty_all(self) -> bool:
+        """Checks if all the IO objects in this object are empty.
+
+        Returns:
+             Returns True if al the IO objects are empty, False otherwise.
+        """
+        return all(v.empty() for v in self.data.values())
+
+    def poll_io(self) -> dict[str, bool]:
+        """Polls the IO objects in this object.
+
+        Returns:
+            The result of polling the IO objects in this object.
+        """
+        return {k: v.poll() for k, v in self.data.items()}
+
+    def poll_any(self) -> bool:
+        """Checks if any of the IO objects in this object have an item in them.
+
+        Returns:
+            Returns True if any of the IO objects have an item in them, False otherwise.
+        """
+        return any(v.poll() for v in self.data.values())
+
+    def poll_all(self) -> bool:
+        """Checks if all the IO objects in this object have an item in them.
+
+        Returns:
+             Returns True if al the IO objects have an item in them, False otherwise.
+        """
+        return all(v.poll() for v in self.data.values())
 
     # Get
     def get_item(self, name: str, **kwargs: Any) -> Any:
@@ -201,13 +255,94 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
         """
         return await self.data[name].get_async(name=name, **kwargs)
 
-    def get_all(self, *args, **kwargs) -> dict[str, Any]:
-        """Gets all items from the io object.
+    def get_ordered(self, *args, **kwargs) -> tuple[Any, ...]:
+        """Gets an item from all the IO objects.
 
         Returns:
-            The all items in the io objects.
+            The first item in all the IO objects.
+        """
+        return tuple(v.get(*args, **kwargs) for v in self.data.values())
+
+    async def get_ordered_async(self, *args, **kwargs) -> tuple[Any, ...]:
+        """Asynchronously gets an item from all the IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        return await gather(*(v.get(*args, **kwargs) for v in self.data.values()))
+
+    def get_all(self, *args, **kwargs) -> dict[str, Any]:
+        """Gets an item from all the IO objects.
+
+        Returns:
+            The first item in all the IO objects.
         """
         return {k: v.get(*args, **kwargs) for k, v in self.data.items()}
+
+    async def get_all_async(self, *args, **kwargs) -> dict[str, Any]:
+        """Asynchronously gets an item from all the IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        return dict(zip(self.data.keys(), await gather(*(v.get(*args, **kwargs) for v in self.data.values()))))
+
+    def get_required(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Gets an item from all required IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        required = set((self.required or self.order) if required is None else required)
+
+        if defaults is None:
+            defaults = self.optional_defaults
+
+        items = {}
+        for k, v in self.data.items():
+            if k in required:
+                items[k] = v.get(*args, **kwargs)
+            else:
+                items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
+        return items
+
+    async def get_required_async(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Asynchronously gets an item from the required IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        required = set((self.required or self.order) if required is None else required)
+
+        if defaults is None:
+            defaults = self.optional_defaults
+
+        items = []
+        for k, v in self.data.items():
+            if k in required:
+                items.append(v.get_async(*args, **kwargs))
+            else:
+                items.append(v.get_async(
+                    *args,
+                    block=False,
+                    default=defaults[k] if k in defaults else default,
+                    **kwargs
+                ))
+        return dict(zip(self.data.keys(), await gather(*items)))
 
     # Put
     def put_item(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
@@ -293,6 +428,28 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
         """
         await gather(*(io_object.put(value, *args, **kwargs) for io_object in self.data.values()))
 
+    def put_break_sentinel(self, *args, **kwargs: Any) -> None:
+        """Puts the break sentinel to all IO objects.
+
+        Args:
+            value: The object to put into this object.
+            *args: The arguments for the inner io objects' put.
+            **kwargs: The keyword arguments for the inner io objects' put.
+        """
+        for io_object in self.data.values():
+            io_object.put(self.break_sentinel, *args, **kwargs)
+
+    async def put_break_sentinel_async(self, *args, **kwargs: Any) -> None:
+        """Asynchronously puts the break sentinel to all IO objects.
+
+        Args:
+            value: The object to put into this object.
+            *args: The arguments for the inner io objects' put.
+            **kwargs: The keyword arguments for the inner io objects' put.
+        """
+        await gather(*(io_object.put(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
+
+
     # IO Mapping
     def get_links(self) -> dict[str, IOMap] | None:
         """Gets the links of this IO object.
@@ -301,4 +458,3 @@ class IORouter(OrderableDict, BaseIOMultiplexer):
            The links of this IO object.
        """
         return {n: m.generate_io_map() for n, m in self.data}
-

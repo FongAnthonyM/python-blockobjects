@@ -150,11 +150,11 @@ class MultiProcessingContext(BaseProcessingContext):
         elif (manager := self.managers.get(c_name, None)) is None:
             manager = manager_type()
 
+        # Start the Manger and get the proxy
         if not manager.is_alive():
-            manager.start()
-
-        # Create The Proxy
-        proxy = getattr(manager, c_name)(*args, **kwargs)
+            proxy = manager.start_proxy(proxy_name=c_name, proxy_args=args, proxy_kwargs=kwargs)
+        else:
+            proxy = getattr(manager, c_name)(*args, **kwargs)
 
         # Register the Proxy
         p_ref = ref(proxy)

@@ -48,6 +48,9 @@ class ProcessDelegate(BaseContextualObject):
 
     _local_: ClassVar[set] = {"stop_server", "set_server_state", "update", "update_server"}
 
+    # Attributes #
+    untransmittable: set = set()
+
     # Class Methods #
     @classmethod
     def _get_exposed(cls) -> set[str]:
@@ -59,21 +62,27 @@ class ProcessDelegate(BaseContextualObject):
         public_methods = set(iter_public_method_names(cls)) if cls.public_exposed else set()
         return (public_methods | cls.exposed | cls._exposed_) - cls.unexposed - cls._unexposed_
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         """The init when creating a subclass.
 
         Args:
             **kwargs: The keyword arguments for creating a subclass.
         """
-        super.__init_subclass__(**kwargs)
+        super.__init_subclass__()
 
+        ignore = set()
         for name in cls._get_exposed():
             method = getattr(cls, name, None)
-            if not isinstance(method, delegatemethod):
+            if (
+                not isinstance(method, delegatemethod) and
+                not isinstance(getattr(method, "__func__", method), delegatemethod)
+            ):
                 d_method = delegatemethod(method)
                 if name in cls._local_:
-                    d_method.wrapper_method = "local_call"
+                    getattr(d_method, "_func_", d_method).wrapper_method = "local_call"
                 setattr(cls, name, d_method)
+                ignore.add(name)
+        cls._exposed_done = ignore
 
     # Attributes
     _is_proxy: bool = False
@@ -97,6 +106,19 @@ class ProcessDelegate(BaseContextualObject):
         # Object Construction #
         if init:
             self.construct(start_server=start_server, context=context, _state=_state)
+
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        for name in ("_proxy", "_is_proxy",):
+            if name in state:
+                del state[name]
+        return state
 
     # Instance Methods #
     # Constructors/Destructors
@@ -125,27 +147,6 @@ class ProcessDelegate(BaseContextualObject):
         # Start Server
         if start_server:
             self._start_server()
-
-    # Pickling
-    def __getstate__(self) -> dict[str, Any]:
-        """Creates a dictionary of attributes which can be used to rebuild this object.
-
-        Returns:
-            A dictionary of this object's attributes.
-        """
-        state = self.__dict__.copy()
-        for name in ("_proxy", "_is_proxy",):
-            if name in state:
-                del state[name]
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Builds this object based on a dictionary of corresponding attributes.
-
-        Args:
-            state: The attributes to build this object from.
-        """
-        self.__dict__.update(state)
 
     # Proxy and Server
     # State
@@ -190,13 +191,32 @@ class ProcessDelegate(BaseContextualObject):
         """
         setattr(self, name, value)
 
+    def _get_state(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes, delegated from either the local object or remote object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = self.__getstate__()
+        for name in self.untransmittable:
+            del state[name]
+        return state
+
     def get_state(self) -> dict[str, Any]:
         """Creates a dictionary of attributes, delegated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
         """
-        return self.__getstate__()
+        return self._get_state()
+
+    def _set_state(self, state: dict[str, Any]) -> None:
+        """Delegated building of either the local object or remote object from dictionary of attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        self.__setstate__(state)
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Delegated building of either the local object or remote object from dictionary of attributes.
@@ -204,7 +224,7 @@ class ProcessDelegate(BaseContextualObject):
         Args:
             state: The attributes to build this object from.
         """
-        self.__setstate__(state)
+        self._set_state(state)
 
     def set_server_state(self, state: dict[str, Any]) -> None:
         """Builds the remote server object from dictionary of attributes.
@@ -228,7 +248,7 @@ class ProcessDelegate(BaseContextualObject):
     def update_server(self) -> None:
         """Builds the remote server object from state of the local object."""
         if self._is_proxy:
-            self.set_server_state(self.__getstate__())
+            self.set_server_state(self._get_state())
 
     # Server Management
     def _start_server(self, args: tuple = (), kwargs: dict | None = None) -> None:
@@ -257,10 +277,15 @@ class ProcessDelegate(BaseContextualObject):
         """
         self._start_server(args, kwargs)
 
-    def _stop_server(self) -> None:
-        """Stops the remote server relative to this object."""
+    def _stop_server(self, update: bool = True) -> None:
+        """Stops the remote server relative to this object.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
         # Updates this object's attributes
-        self.update()
+        if update:
+            self.update()
 
         # Remove the server (server should stop when de-referenced)
         self._proxy = None
@@ -268,14 +293,18 @@ class ProcessDelegate(BaseContextualObject):
         # Set this object's state is not a proxy
         self._is_proxy = False
 
-    def stop_server(self) -> None:
-        """Stops a remote server. If called multiple times, it will recursively stop the deepest server."""
+    def stop_server(self, update: bool = True) -> None:
+        """Stops a remote server. If called multiple times, it will recursively stop the deepest server.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
         if self.is_proxy():
             if (proxy := self._proxy) is not None and proxy._is_alive():
                 if proxy.get_attribute("_is_proxy"):
-                    proxy.stop_sever()
+                    proxy.stop_sever(update)
                 else:
-                    self._stop_server()
+                    self._stop_server(update)
             else:
                 raise RuntimeError("Server process must be alive")
 

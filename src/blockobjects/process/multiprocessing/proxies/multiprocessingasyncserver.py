@@ -1,4 +1,4 @@
-""" asyncserver.py
+""" multiprocessingasyncserver.py
 
 """
 # Package Header #
@@ -29,7 +29,7 @@ from ..futures import PipeFuture
 
 # Definitions #
 # Classes #
-class AsyncServer(SharedMemoryServer):
+class MultiprocessingAsyncServer(SharedMemoryServer):
 
     def __init__(self, *args, **kwargs):
         SharedMemoryServer.__init__(self, *args, **kwargs)

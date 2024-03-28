@@ -16,6 +16,7 @@ __email__ = __email__
 from typing import Any
 
 # Third-Party Packages #
+from baseobjects import search_sentinel
 
 # Local Packages #
 from src.blockobjects.process.context.bases.baseprocessingcontext import BaseProcessingContext
@@ -83,7 +84,7 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
 
         super().construct(context=context)
 
-        if context is not None:
+        if self.context is not None:
             self.queue = self.context.require_queue(name=str(id(self)), maxsize=maxsize, space_wait=space_wait)
 
     # Context
@@ -102,7 +103,24 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
         self.queue = new_queue
 
     # Queue
-    def get(self, block: bool = True, timeout: float | None = None) -> Any:
+    # State
+    def empty(self) -> bool:
+        """Returns True if the queue is empty, False otherwise."""
+        return self.queue.empty()
+
+    def poll(self) -> bool:
+        """Returns True if the queue has something in it, False otherwise."""
+        return self.queue.poll()
+
+    # Get
+    def get(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -116,9 +134,17 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
             Empty: When there are no items to get in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        return self.queue.get(block=block, timeout=timeout)
+        return self.queue.get(block=block, timeout=timeout, default=default, *args, **kwargs)
 
-    async def get_async(self, block: bool = True, timeout: float | None = None, interval: float = 0.0) -> Any:
+    async def get_async(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Asynchronously gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -133,13 +159,21 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
             Empty: When there are no items to get in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        return await self.queue.get(block=block, timeout=timeout, interval=interval)
+        return await self.queue.get_async(
+            block=block,
+            timeout=timeout,
+            interval=interval,
+            default=default,
+            *args,
+            **kwargs,
+        )
 
-    def put(self, obj: Any, block: bool = True, timeout: float | None = None) -> None:
-        """Puts an object into the queue, waits for access to the queue.
+    # Put
+    def put(self, value: Any, block: bool = True, timeout: float | None = None, *args: Any, **kwargs: Any) -> None:
+        """Puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
             block: Determines if this method will block execution.
             timeout: The time, in seconds, to wait for space in the queue.
 
@@ -147,13 +181,20 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        return self.queue.put(obj=obj, block=block, timeout=timeout)
+        return self.queue.put(value=value, block=block, timeout=timeout)
 
-    async def put_async(self, obj: Any, timeout: float | None = None, interval: float = 0.0) -> None:
-        """Asynchronously puts an object into the queue, waits for access to the queue.
+    async def put_async(
+        self,
+        value: Any,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Asynchronously puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
             timeout: The time, in seconds, to wait for space in the queue.
             interval: The time, in seconds, between each access check.
 
@@ -161,8 +202,9 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        return await self.queue.put_async(obj=obj, timeout=timeout, interval=interval)
+        return await self.queue.put_async(value=value, timeout=timeout, interval=interval)
 
+    # Join
     def join(self) -> None:
         """Blocks until all items in the Queue have been gotten and the registry is updated."""
         self.queue.join()

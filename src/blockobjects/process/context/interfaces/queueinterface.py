@@ -27,11 +27,16 @@ class QueueInterface(BaseObject):
     """An interface which outlines the basis for an async queue."""
 
     # Instance Methods #
-    # Queue
+    # State
     def empty(self) -> bool:
-        """Determines if this queue is empty."""
+        """Returns True if the queue is empty, False otherwise."""
         raise NotImplemented
 
+    def poll(self) -> bool:
+        """Returns True if the queue has something in it, False otherwise."""
+        raise NotImplementedError
+
+    # Get
     def get(self, block: bool = True, timeout: float | None = None, *args: Any, **kwargs: Any) -> Any:
         """Gets an item from the queue."""
         raise NotImplemented
@@ -47,14 +52,23 @@ class QueueInterface(BaseObject):
         """Asynchronously gets an item from the queue."""
         raise NotImplemented
 
-    def put(self, *args: Any, **kwargs: Any) -> None:
-        """Puts an item from on the queue."""
+    # Put
+    def put(self, value: Any, *args: Any, **kwargs: Any) -> None:
+        """Puts an item on the queue."""
         raise NotImplemented
 
-    async def put_async(self, timeout: float | None = None, interval: float = 0.0, *args: Any, **kwargs: Any) -> None:
-        """Asynchronously puts an item from on the queue."""
+    async def put_async(
+        self,
+        value: Any,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Asynchronously puts an item on the queue."""
         raise NotImplemented
 
+    # Join
     def join(self) -> None:
         """Blocks until all items in the Queue have been gotten."""
         pass

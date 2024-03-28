@@ -44,7 +44,7 @@ class ContextualLock(BaseContextualObject, LockInterface):
         """
         super().construct(context=context)
 
-        if context is not None:
+        if self.context is not None:
             self.lock = self.context.require_lock(name=str(id(self)))
 
     # Context Managers

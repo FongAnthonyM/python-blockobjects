@@ -49,7 +49,7 @@ class ContextualEvent(BaseContextualObject, EventInterface):
         """
         super().construct(context=context)
 
-        if context is not None:
+        if self.context is not None:
             self.event = self.context.require_event(name=str(id(self)))
 
     # Context

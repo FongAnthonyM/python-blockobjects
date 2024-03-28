@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import Any
 
 # Third-Party Packages #
+from baseobjects import search_sentinel
 
 # Local Packages #
 from ...context import QueueInterface
@@ -56,7 +57,20 @@ class MultiProcessingSimpleQueue(SimpleQueue, QueueInterface):
         super().__init__(ctx=get_context() if ctx is None else ctx)
 
     # Instance Methods #
-    def get(self, block: bool = True, timeout: float | None = None) -> Any:
+    # State
+    def poll(self) -> bool:
+        """Returns True if the queue has something in it, False otherwise."""
+        return self._poll()
+
+    # Get
+    def get(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -112,10 +126,20 @@ class MultiProcessingSimpleQueue(SimpleQueue, QueueInterface):
             raise InterruptedError
         elif res is not None:
             return ForkingPickler.loads(res)  # Unserialize the data after having released the lock
+        elif default is not search_sentinel:
+            return default
         else:
             raise Empty
 
-    async def get_async(self, block: bool = True, timeout: float | None = None, interval: float = 0.0) -> Any:
+    async def get_async(
+        self,
+        block: bool = True,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        default: Any = search_sentinel,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         """Asynchronously gets an item from the queue, waits for an item if the queue is empty.
 
         Args:
@@ -174,9 +198,12 @@ class MultiProcessingSimpleQueue(SimpleQueue, QueueInterface):
             raise InterruptedError
         elif res is not None:
             return ForkingPickler.loads(res)  # Unserialize the data after having released the lock
+        elif default is not search_sentinel:
+            return default
         else:
             raise Empty
 
+    # Put
     def put_bytes(self, buf: bytes, offset: int = 0, size: int | None = None) -> None:
         """Puts a bytes object into the queue, waits for access to the queue.
 
@@ -246,20 +273,27 @@ class MultiProcessingSimpleQueue(SimpleQueue, QueueInterface):
         # Interruption leads to an error.
         raise InterruptedError
 
-    def put(self, obj: Any) -> None:
-        """Puts an object into the queue, waits for access to the queue.
+    def put(self, value: Any, *args: Any, **kwargs: Any) -> None:
+        """Puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
         """
-        self.put_bytes(ForkingPickler.dumps(obj))
+        self.put_bytes(ForkingPickler.dumps(value))
 
-    async def put_async(self, obj: Any, timeout: float | None = None, interval: float = 0.0) -> None:
-        """Asynchronously puts an object into the queue, waits for access to the queue.
+    async def put_async(
+        self,
+        value: Any,
+        timeout: float | None = None,
+        interval: float = 0.0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Asynchronously puts a value into the queue, waits for access to the queue.
 
         Args:
-            obj: The object to put into the queue.
+            value: The value to put into the queue.
             timeout: The time, in seconds, to wait for access to the queue.
             interval: The time, in seconds, between each access check.
         """
-        await self.put_bytes_async(ForkingPickler.dumps(obj), timeout=timeout, interval=interval)
+        await self.put_bytes_async(ForkingPickler.dumps(value), timeout=timeout, interval=interval)

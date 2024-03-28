@@ -16,3 +16,7 @@ __email__ = __email__
 from .context import *
 from .multiprocessing import *
 from .processdelegate import *
+
+# Defaults #
+DEFAULT_PROCESS_CONTEXT = ManagerContext()
+BaseContextualObject._context = DEFAULT_PROCESS_CONTEXT
