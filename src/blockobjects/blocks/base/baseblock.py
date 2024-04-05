@@ -13,11 +13,13 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction
+from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, sleep
 from asyncio.events import AbstractEventLoop, get_event_loop
 from abc import abstractmethod
 from collections.abc import Iterable
+from concurrent.futures import Future as ConcurrentFuture
 from contextlib import contextmanager
+from time import perf_counter
 from typing import ClassVar, Any
 from warnings import warn
 
@@ -71,6 +73,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         **kwargs: Keyword arguments for inheritance.
     """
     # Class Attributes #
+    public_exposed = False
+    exposed: ClassVar[set] = {"run", "start"}
+
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...]] = ()
     default_optional_input: ClassVar[dict[str, Any]] = {}
@@ -118,6 +123,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     def __init__(
         self,
         *args: Any,
+        will_proxy: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -148,7 +154,14 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         # Construct #
         if init:
-            self.construct(*args, init_io=init_io, init_setup=init_setup, setup_kwargs=setup_kwargs, **kwargs)
+            self.construct(
+                *args,
+                will_proxy=will_proxy,
+                init_io=init_io,
+                init_setup=init_setup,
+                setup_kwargs=setup_kwargs,
+                **kwargs,
+            )
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -158,7 +171,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             A dictionary of this object's attributes.
         """
         state = super().__getstate__()
-        del state["async_event_loop"]
+        for name in {"will_proxy", "async_event_loop"}:
+            if name in state:
+                del state[name]
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -175,6 +190,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     def construct(
         self,
         *args: Any,
+        will_proxy: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -184,12 +200,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         Args:
             *args: Arguments for inheritance.
+            will_proxy: Determines if this object will execute as proxy.
             init_io: Determines if construct_io run during this construction.
             init_setup: Determines if setup will run during this construction.
             setup_kwargs: The keyword arguments for the setup method.
             **kwargs: Keyword arguments for inheritance.
         """
         # New Assignment #
+        if will_proxy is not None:
+            self.will_proxy = will_proxy
+
         if setup_kwargs is not None:
             self.setup_kwargs.update(setup_kwargs)
 
@@ -390,7 +410,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         while self.loop_event.is_set():
             # Get Inputs
             inputs = await create_task(self.execute_input_async())
-            if any((inputs[n] is self.inputs.break_sentinel) for n in self.inputs.required):
+            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.required):
                 self.loop_event.clear()
                 continue
 
@@ -618,8 +638,59 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         else:
             await self._start(s_kwargs, e_kwargs, t_kwargs)
 
-    def _stop(self, server: bool = True, update: bool = True) -> None:
-        """Stops the remote server relative to this object.
+    # Join Execution
+    def _join_execution(self, timeout: float | None = None) -> None:
+        """Waits until the execution of the block has finished.
+
+        Args:
+            timeout: The time, in seconds, to wait for the block to finish.
+        """
+        if timeout is None:
+            while self._is_executing:
+                pass
+        else:
+            deadline = perf_counter() + timeout
+            while self._is_executing:
+                if deadline <= perf_counter():
+                    return
+
+    def join_execution(self, timeout: float | None = None) -> None:
+        """Waits until the execution of the block has finished.
+
+        Args:
+            timeout: The time, in seconds, to wait for the block to finish.
+        """
+        self._join_execution(timeout)
+
+    async def _join_execution_async(self, timeout: float | None = None, interval: float = 0.0) -> None:
+        """Asynchronously waits until the execution of the block has finished.
+
+        Args:
+            timeout: The time, in seconds, to wait for the block to finish.
+            interval: The time, in seconds, between each join check.
+        """
+        if timeout is None:
+            while self._is_executing:
+                await sleep(interval)
+        else:
+            deadline = perf_counter() + timeout
+            while self._is_executing:
+                if deadline <= perf_counter():
+                    return
+                await sleep(interval)
+
+    async def join_execution_async(self, timeout: float | None = None, interval: float = 0.0) -> None:
+        """Asynchronously waits until the execution of the block has finished.
+
+        Args:
+            timeout: The time, in seconds, to wait for the block to finish.
+            interval: The time, in seconds, between each join check.
+        """
+        await self._join_execution_async(timeout, interval)
+
+    # Stop Block Continuous Execution
+    def stop(self, server: bool = True, update: bool = True) -> None:
+        """Stops the execution of this block, optionally stopping the server relative to this object.
 
         Args:
             server: Determines if the remote server should be stopped.
@@ -628,18 +699,22 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self.loop_event.clear()
         self.inputs.put_break_sentinel()
         if self.is_alive() and server:
+            if update:
+                self.join_execution()
             self._stop_server(update)
 
-    def stop(self, server: bool = True, update: bool = True) -> None:
-        """Stops a remote server. If called multiple times, it will recursively stop the deepest server.
+    async def stop_async(self, server: bool = True, update: bool = True) -> None:
+        """Asynchronously Stops the execution of this block, optionally stopping the server relative to this object.
 
         Args:
             server: Determines if the remote server should be stopped.
             update: Determines if this object should be updated from the server before stopping.
         """
         self.loop_event.clear()
-        self.inputs.put_break_sentinel()
+        await self.inputs.put_break_sentinel_async()
         if self.is_alive() and server:
+            if update:
+                await self.join_execution_async()
             self._stop_server(update)
 
     # Proxy

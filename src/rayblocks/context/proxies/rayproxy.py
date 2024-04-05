@@ -1,8 +1,8 @@
-""" contextualproxy.py
+""" rayproxy.py
 
 """
 # Package Header #
-from ....header import *
+from ...header import *
 
 # Header #
 __author__ = __author__
@@ -13,30 +13,31 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from asyncio import iscoroutinefunction
 from collections.abc import Iterable, Generator
 from typing import Any, ClassVar
 
 # Third-Party Packages #
 from baseobjects.typing import AnyCallable
 from baseobjects.operations import iter_public_method_names
+from src.blockobjects.process.context import ProxyInterface, BaseProcessingContext
+import ray
+from ray import get
+from ray.actor import ActorClass, ActorHandle
 
 # Local Packages #
-from ..bases import BaseProcessingContext
-from ..contextualobject import ContextualObjectInterface
-from ..interfaces import ProxyInterface
 
 
 # Definitions #
 # Classes #
-class ContextualProxy(ContextualObjectInterface, ProxyInterface):
-
-    # Class Attributes #
+class RayProxy(ProxyInterface):
+    # Class Attributes
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
     _exposed_: ClassVar[set] = set()
     _unexposed_: ClassVar[set] = set()
     exposed: ClassVar[set]
 
-    # Class Methods #
+    # Class Methods
     @classmethod
     def get_exposed(cls, target_cls: type, exposed: Iterable[str] | None = None) -> set[str]:
         public_methods = set(iter_public_method_names(target_cls))
@@ -48,7 +49,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         return (public_methods | exposed | c_exposed | p_exposed) - c_unexposed - p_unexposed
 
     @classmethod
-    def _create_proxy_method(cls, name: str) -> AnyCallable:
+    def _create_proxy_method(cls, name: str, is_coro: bool) -> AnyCallable:
         """A factory for creating method functions for accessing a proxy's methods.
 
         Args:
@@ -57,14 +58,19 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         Returns:
             The function for a method.
         """
-        def func_(obj, *args, **kwargs):
-            """Evaluates the wrapped object's method."""
-            return getattr(obj._proxy, name)(*args, **kwargs)
+        if is_coro:
+            def func_(obj, *args, **kwargs):
+                """Evaluates the wrapped object's method."""
+                return getattr(obj._actor, name).remote(*args, **kwargs)
+        else:
+            def func_(obj, *args, **kwargs):
+                """Evaluates the wrapped object's method."""
+                return get(getattr(obj._actor, name).remote(*args, **kwargs))
 
         return func_
 
     @classmethod
-    def create_proxy_type(cls, name: str, exposed: Iterable[str]) -> type:
+    def create_proxy_type(cls, target_cls: type, name: str, exposed: Iterable[str]) -> type:
         # Create Storage Key
         exposed = tuple(exposed)
         key = (name, exposed)
@@ -77,46 +83,46 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         if (proxy_class := proxy_classes.get(key, None)) is None:
             proxy_classes[key] = proxy_class = type(name, (cls,), {})
             for name in exposed:
-                setattr(proxy_class, name, cls._create_proxy_method(name))
+                is_coro = iscoroutinefunction(getattr(target_cls, name))
+                setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
             proxy_class.exposed = set(exposed)
 
         # Return Proxy Class
         return proxy_class
 
     @classmethod
-    def new_proxy(
+    def new_actor_proxy(
         cls,
         target_cls: type,
+        actor_cls: ActorClass,
         args=(),
         kwargs=None,
         *_args,
         exposed: Iterable[str] | None = None,
         **_kwargs,
-    ) -> "ContextualProxy":
+    ) -> "RayProxy":
         # Create Proxy Type
-        name = f"AutoContextualProxy{target_cls.__name__}"
+        name = f"AutoRayProxy{target_cls.__name__}"
         exposed = cls.get_exposed(target_cls=target_cls, exposed=exposed)
-        proxy_type = cls.create_proxy_type(name=name, exposed=exposed)
+        proxy_type = cls.create_proxy_type(target_cls=target_cls, name=name, exposed=exposed)
 
         # Return Proxy
-        return proxy_type(cls=target_cls, args=args, kwargs=kwargs, exposed=exposed, **_kwargs)
+        return proxy_type(cls=actor_cls, args=args, kwargs=kwargs, exposed=exposed, **_kwargs)
 
     # Attributes #
-    __context: BaseProcessingContext | None = None
-    _proxy: ProxyInterface | None = None
+    _actor_class: ActorClass | None = None
+    _actor: ActorHandle | None = None
 
     # Magic Methods #
     # Construction/Destruction
     def __init__(
         self,
-        proxy: ProxyInterface | None = None,
-        cls=None,
-        args=None,
-        kwargs=None,
+        actor: ActorHandle | None = None,
+        cls: ActorClass | None = None,
+        args: Iterable[Any] = (),
+        kwargs: dict[str, Any] | None = None,
         *,
-        c_cls=None,
         exposed: Iterable[str] | None = None,
-        context: BaseProcessingContext | None = None,
         init: bool = True,
     ) -> None:
         # Attributes #
@@ -127,63 +133,43 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         # Object Construction #
         if init:
             self.__construct(
-                proxy=proxy,
+                actor=actor,
                 cls=cls,
                 args=args,
                 kwargs=kwargs,
-                c_cls=c_cls,
                 exposed=exposed,
-                context=context,
             )
 
     # Instance Methods #
     # Constructors/Destructors
     def __construct(
         self,
-        proxy: ProxyInterface | None = None,
-        cls=None,
-        args=None,
-        kwargs=None,
-        c_cls=None,
-        exposed: Iterable[str] | None = None,
+        actor: ActorHandle | None = None,
+        cls: ActorClass | None = None,
+        args: Iterable[Any] = (),
+        kwargs: dict[str, Any] | None = None,
         *,
-        context: BaseProcessingContext | None = None,
+        exposed: Iterable[str] | None = None,
+        **_kwargs: Any,
     ) -> None:
         """Constructs this object.
 
         Args:
             context: The context of this Queue.
         """
-        if context is not None:
-            self.__context = context
+        if cls is not None:
+            self._actor_class = cls
 
-        if proxy is not None:
-            self._proxy = proxy
+        if actor is not None:
+            self._actor = actor
 
         super().construct()
 
-        if self._proxy is None and context is not None:
-            self._proxy = self.__context.create_proxy(
-                name=str(id(self)),
-                cls=cls,
-                args=args,
-                kwargs=kwargs,
-                c_cls=c_cls,
-                exposed=exposed,
-            )
-
-    # Context
-    def __set_context(self, context: BaseProcessingContext) -> None:
-        """Sets the context of this object to the given context.
-
-        Args:
-            context: The context to assign this object to.
-        """
-        self.__context = context
-
-        # Create a new server and proxy
-        new_proxy = context.require_proxy(name=str(id(self)))
-        self._proxy = new_proxy
+        if self._actor is None and self._actor_class is not None:
+            if _kwargs:
+                self._actor_ = self._actor_class.options(**_kwargs).remote(*args, **kwargs)
+            else:
+                self._actor = self._actor_class.remote(*args, **kwargs)
 
     # State
     def _is_alive(self) -> bool:

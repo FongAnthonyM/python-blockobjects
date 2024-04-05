@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from typing import Any, NamedTuple, Optional
 
 # Third-Party Packages #
-from baseobjects import BaseObject
+from baseobjects import BaseObject, SentinelObject
 
 # Local Packages #
 
@@ -36,7 +36,7 @@ class BaseIO(BaseObject):
     """An abstract class for IO objects."""
 
     # Attributes #
-    empty_sentinel: object = object()
+    empty_sentinel: SentinelObject = SentinelObject("io_empty")
 
     # Instance Methods #
     # State

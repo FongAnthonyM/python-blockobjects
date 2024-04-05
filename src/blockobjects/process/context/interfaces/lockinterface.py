@@ -44,10 +44,6 @@ class LockInterface(BaseObject):
         """
 
     @abstractmethod
-    def release(self) -> None:
-        """Releases the lock."""
-
-    @abstractmethod
     async def acquire_async(self, block: bool = True, timeout: float | None = None, interval: float = 0.0) -> bool:
         """Asynchronously acquires the lock, waits for the lock if block is True.
 
@@ -62,6 +58,10 @@ class LockInterface(BaseObject):
         Raises:
             InterruptedError: When this method is interrupted by an interrupt event.
         """
+
+    @abstractmethod
+    def release(self) -> None:
+        """Releases the lock."""
 
     @abstractmethod
     async def async_context(

@@ -59,7 +59,7 @@ class BaseProxyTest(ClassTest):
             return "fast"
 
         async def active_async(self):
-            await sleep(0.000000001)
+            await sleep(0.0000001)
             return "active"
 
     class ExampleTwo:
@@ -132,9 +132,11 @@ class BaseProxyTest(ClassTest):
         run(self.quick_async(test_proxy))
 
     async def active_async(self, test_proxy):
-        future = test_proxy.active_async()
-        assert not future.done()
-        answer = await future
+        awaitable = test_proxy.active_async()
+        if (done_method := getattr(awaitable, "done", None)) is not None:
+            assert not done_method()
+
+        answer = await awaitable
         assert answer == "active"
 
     def test_active_async(self, test_proxy):

@@ -39,9 +39,9 @@ class ProcessDelegate(BaseContextualObject):
     """
 
     # Class Attributes #
+    public_exposed: ClassVar[bool] = True
     _exposed_: ClassVar[set] = set()
     exposed: ClassVar[set] = set()
-    public_exposed: ClassVar[bool] = True
 
     _unexposed_: ClassVar[set] = {"is_proxy", "is_alive",  "get_context", "set_context"}
     unexposed: ClassVar[set] = set()
@@ -50,6 +50,7 @@ class ProcessDelegate(BaseContextualObject):
 
     # Attributes #
     untransmittable: set = set()
+    proxy_kwargs: dict[str, Any] = {}
 
     # Class Methods #
     @classmethod
@@ -77,9 +78,8 @@ class ProcessDelegate(BaseContextualObject):
                 not isinstance(method, delegatemethod) and
                 not isinstance(getattr(method, "__func__", method), delegatemethod)
             ):
-                d_method = delegatemethod(method)
-                if name in cls._local_:
-                    getattr(d_method, "_func_", d_method).wrapper_method = "local_call"
+                wrapper_method = "local_call" if name in cls._local_ else delegatemethod._wrapper_method
+                d_method = delegatemethod(method, wrapper_method=wrapper_method)
                 setattr(cls, name, d_method)
                 ignore.add(name)
         cls._exposed_done = ignore
@@ -199,7 +199,8 @@ class ProcessDelegate(BaseContextualObject):
         """
         state = self.__getstate__()
         for name in self.untransmittable:
-            del state[name]
+            if name in state:
+                del state[name]
         return state
 
     def get_state(self) -> dict[str, Any]:
@@ -263,7 +264,7 @@ class ProcessDelegate(BaseContextualObject):
             kwargs["_state"] = self.__getstate__()
 
         # Start Server by creating a proxy from the context
-        self._proxy = self.context.create_proxy(cls=self.__class__, args=args, kwargs=kwargs)
+        self._proxy = self.context.create_proxy(cls=self.__class__, args=args, kwargs=kwargs, **self.proxy_kwargs)
 
         # Ensure that this object's state is a proxy
         self._is_proxy = True

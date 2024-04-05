@@ -289,7 +289,7 @@ class BaseProcessingContext(BaseObject):
         if c_cls is None:
             c_cls = self.proxy_type
 
-        proxy = c_cls.new_proxy(cls, args, kwargs=kwargs, *_args, c_cls=c_cls, exposed=exposed, **_kwargs)
+        proxy = c_cls.new_proxy(cls, args, kwargs=kwargs, *_args, exposed=exposed, **_kwargs)
 
         self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = ref(proxy)
         return proxy

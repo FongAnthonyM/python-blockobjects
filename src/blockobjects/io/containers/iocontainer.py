@@ -17,7 +17,7 @@ from typing import Any
 from queue import Empty
 
 # Third-Party Packages #
-from baseobjects import search_sentinel
+from baseobjects import SentinelObject, search_sentinel
 
 # Local Packages #
 from ..base.baseio import BaseIO
@@ -35,11 +35,11 @@ class IOContainer(BaseIO):
     # State
     def empty(self) -> bool:
         """Returns True if the object is empty, False otherwise."""
-        return self.value is self.empty_sentinel
+        return self.empty_sentinel == self.value
 
     def poll(self) -> bool:
         """Returns True if the object has something in it, False otherwise."""
-        return self.value is not self.empty_sentinel
+        return not self.empty_sentinel == self.value
 
     # Get
     def get(self, default: Any = search_sentinel, *args, **kwargs) -> Any:

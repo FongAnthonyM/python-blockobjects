@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from typing import ClassVar, Any
 
 # Third-Party Packages #
-from baseobjects import search_sentinel
+from baseobjects import SentinelObject, search_sentinel
 from baseobjects.collections import OrderableDict
 
 # Local Packages #
@@ -56,7 +56,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_put_async: ClassVar[str] = "put_to_all_async"
 
     # Attributes #
-    break_sentinel: object = object()
+    break_sentinel: SentinelObject = SentinelObject("io_break")
     default_io: type[BaseIO] = IOQueue
     required: tuple[str] = ()
     optional_defaults: dict[str, Any] = {}
@@ -448,7 +448,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The keyword arguments for the inner io objects' put.
         """
         await gather(*(io_object.put(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
-
 
     # IO Mapping
     def get_links(self) -> dict[str, IOMap] | None:

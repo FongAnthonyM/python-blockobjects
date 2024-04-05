@@ -14,6 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from asyncio import AbstractEventLoop, iscoroutine, run_coroutine_threadsafe, get_event_loop
+from concurrent.futures import Future
 from multiprocessing import util
 from multiprocessing.managers import SharedMemoryServer, Token
 import sys
@@ -85,11 +86,12 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
                     typeid = gettypeid and gettypeid.get(methodname, None)
                     if iscoroutine(res):
                         # Run Coroutine in Thread
-                        t_future = run_coroutine_threadsafe(res, self._loop)
+                        res = run_coroutine_threadsafe(res, self._loop)
+                    if isinstance(res, Future):
                         c_future = PipeFuture(loop=self._loop)
                         # Check if coroutine is done, returning the result otherwise, return a future.
-                        if t_future.done():
-                            res =  t_future.result()
+                        if res.done():
+                            res =  res.result()
                             if typeid:
                                 rident, rexposed = self.create(conn, typeid, res)
                                 token = Token(typeid, self.address, rident)
@@ -99,7 +101,7 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
                             c_future._result = msg
                             c_future.close()
                         else:
-                            t = threading.Thread(target=self.set_future_result, args=(c_future, t_future, conn, typeid))
+                            t = threading.Thread(target=self.set_future_result, args=(c_future, res, conn, typeid))
                             t.daemon = True
                             t.start()
                         msg = ('#FUTURE', c_future)

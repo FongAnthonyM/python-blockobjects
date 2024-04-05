@@ -2,14 +2,14 @@
 Information about this package.
 """
 # Header #
-__package_name__ = "blockobjects"
+__package_name__ = "rayblocks"
 
 __author__ = "Anthony Fong"
 __credits__ = ["Anthony Fong"]
 __maintainer__ = "Anthony Fong"
 __email__ = ""
 
-__copyright__ = "Copyright 2022, Anthony Fong"
+__copyright__ = "Copyright 2024, Anthony Fong"
 __license__ = "MIT"
 
 __version__ = "0.1.0"

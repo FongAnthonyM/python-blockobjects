@@ -31,11 +31,12 @@ from src.blockobjects.process.multiprocessing import MultiProcessingContext
 from src.blockobjects.process.processdelegate import ProcessDelegate
 from src.blockobjects.blocks import BaseBlock
 from .test_bases import ClassTest
+from src.rayblocks import RayContext
 
 
 # Definitions #
 if DEFAULT_PROCESS_CONTEXT.context is None:
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+    DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
 
 # Classes #
@@ -79,18 +80,18 @@ class TestBaseBlock(ClassTest):
     def test_block(self, request):
         return request.param(self)
 
-    def test_create_local_block(self):
+    def test_create_block_local(self):
         block = self.ExampleOne(init_setup=True)
         assert block is not None
         assert block.setup_flag
 
-    def test_local_evaluate(self):
+    def test_evaluate_local(self):
         block = self.ExampleOne()
         out_one, out_two = block.evaluate(2, 3, 10)
         assert out_one == 6
         assert out_two == 0
 
-    def test_local_execute(self):
+    def test_execute_local(self):
         block = self.ExampleOne()
         block.inputs.put_all(first=2, third=3)
         block.execute()
@@ -98,7 +99,17 @@ class TestBaseBlock(ClassTest):
         assert outputs["out_one"] == 4
         assert outputs["out_two"] == 12
 
-    def test_local_run(self):
+    # def test_execute_proxy(self):
+    #     block = self.ExampleOne()
+    #     block.start_server()
+    #     block.inputs.put_all(first=2, third=3)
+    #     block.execute()
+    #     outputs = block.outputs.get_all()
+    #     block.stop_server()
+    #     assert outputs["out_one"] == 4
+    #     assert outputs["out_two"] == 12
+
+    def test_run_local(self):
         block = self.ExampleOne(init_setup=False)
         block.inputs.put_all(first=2, third=3)
         block.run()
@@ -108,16 +119,32 @@ class TestBaseBlock(ClassTest):
         assert outputs["out_one"] == 4
         assert outputs["out_two"] == 12
 
+    def test_run_proxy(self):
+        block = self.ExampleOne(will_proxy=True, init_setup=False)
+        block.inputs.put_all(first=2, third=3)
+        block.run()
+        outputs = block.outputs.get_all()
+
+        assert outputs["out_one"] == 4
+        assert outputs["out_two"] == 12
+
+        block.update()
+
+        assert block.setup_flag
+        assert block.teardown_flag
+
+        block.stop()
+
     async def local_start_async(self):
         block = self.ExampleOne(init_setup=False)
         block.start()
         block.inputs.put_all(first=2, third=3)
         block.inputs.put_all(first=3, third=2)
-        await sleep(0.3)
+        await sleep(0.2)
         outputs_1 = block.outputs.get_all()
         outputs_2 = block.outputs.get_all()
         block.stop()
-        await sleep(1.0)
+        await sleep(0.001)
         assert block.setup_flag
         assert block.teardown_flag
         assert outputs_1["out_one"] == 4
@@ -128,15 +155,26 @@ class TestBaseBlock(ClassTest):
     def test_local_start_async(self):
         run(self.local_start_async())
 
-    def test_proxy_execute(self):
-        block = self.ExampleOne()
-        block.start_server()
+    def test_start_proxy(self):
+        block = self.ExampleOne(will_proxy=True, init_setup=False)
+        block.start()
         block.inputs.put_all(first=2, third=3)
-        block.execute()
-        outputs = block.outputs.get_all()
-        block.stop_server()
-        assert outputs["out_one"] == 4
-        assert outputs["out_two"] == 12
+        block.inputs.put_all(first=3, third=2)
+        outputs_1 = block.outputs.get_all()
+        outputs_2 = block.outputs.get_all()
+
+        assert outputs_1["out_one"] == 4
+        assert outputs_1["out_two"] == 12
+        assert outputs_2["out_one"] == 6
+        assert outputs_2["out_two"] == 8
+
+        block.stop()
+
+        assert block.setup_flag
+        assert block.teardown_flag
+
+
+
 
 
 
