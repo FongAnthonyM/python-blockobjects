@@ -35,15 +35,27 @@ class EventInterface(BaseObject):
     # Instance Methods #
     # Event
     @abstractmethod
-    def is_set(self):
-        """Checks if the event is set."""
+    def is_set(self) -> bool:
+        """Checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
 
     @abstractmethod
-    def set(self):
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+
+    @abstractmethod
+    def set(self) -> None:
         """Sets the event."""
 
     @abstractmethod
-    def clear(self):
+    def clear(self) -> None :
         """Clears the event."""
 
     @abstractmethod

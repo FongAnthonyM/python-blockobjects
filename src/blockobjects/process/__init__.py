@@ -21,4 +21,5 @@ from .processdelegate import *
 
 # Defaults #
 DEFAULT_PROCESS_CONTEXT = ManagerContext()
+DEFAULT_PROCESS_CONTEXT.select_context("async")
 BaseContextualObject._context = DEFAULT_PROCESS_CONTEXT

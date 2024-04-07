@@ -118,6 +118,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         exposed: Iterable[str] | None = None,
         context: BaseProcessingContext | None = None,
         init: bool = True,
+        **_kwargs: Any,
     ) -> None:
         # Attributes #
 
@@ -134,6 +135,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
                 c_cls=c_cls,
                 exposed=exposed,
                 context=context,
+                **_kwargs,
             )
 
     # Instance Methods #
@@ -148,6 +150,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         exposed: Iterable[str] | None = None,
         *,
         context: BaseProcessingContext | None = None,
+        **_kwargs: Any,
     ) -> None:
         """Constructs this object.
 
@@ -170,6 +173,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
                 kwargs=kwargs,
                 c_cls=c_cls,
                 exposed=exposed,
+                **_kwargs,
             )
 
     # Context

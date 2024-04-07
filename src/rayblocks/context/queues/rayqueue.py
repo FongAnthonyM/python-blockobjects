@@ -22,6 +22,7 @@ from src.blockobjects.process.context import QueueInterface
 from src.blockobjects.process.asynccontext import AsyncQueue
 from ray import remote, get
 from ray.actor import ActorClass, ActorHandle
+from ray.util.queue import Queue
 
 # Local Packages #
 
@@ -107,7 +108,8 @@ class RayQueue(QueueInterface):
             Empty: When there are no items to get in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        return get(self._remote_queue.get.remote(block, timeout, default, *args, **kwargs))
+        # Run the async get to not block the remote actor
+        return get(self._remote_queue.get_async.remote(block, timeout, default, *args, **kwargs))
 
     async def get_async(
         self,
@@ -161,7 +163,7 @@ class RayQueue(QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        get(self._remote_queue.put.remote(value, block, timeout, *args, **kwargs))
+        self._remote_queue.put_async.remote(value, block, timeout, *args, **kwargs)
 
     async def put_async(
         self,
@@ -183,7 +185,7 @@ class RayQueue(QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        await self._remote_queue.put_async.remote(value, block, timeout, *args, **kwargs)
+        self._remote_queue.put_async.remote(value, block, timeout, *args, **kwargs)
 
     def put_nowait(self, value: Any) -> None:
         """Equivalent to put(item, block=False).
@@ -191,7 +193,7 @@ class RayQueue(QueueInterface):
         Raises:
             Full: if the queue is full.
         """
-        get(self._remote_queue.put_nowait.remote(value))
+        self._remote_queue.put_nowait.remote(value)
 
     def task_done(self) -> None:
         """Indicate that a formerly enqueued task is complete.
@@ -207,12 +209,12 @@ class RayQueue(QueueInterface):
         Raises ValueError if called more times than there were items placed in
         the queue.
         """
-        get(self._remote_queue.task_done.remote())
+        self._remote_queue.task_done.remote()
 
     # Join
     def join(self) -> None:
         """Blocks until all items in the Queue have been gotten and the registry is updated."""
-        get(self._remote_queue.join.remote())
+        get(self._remote_queue.join_async.remote())
 
     async def join_async(self, interval: float = 0.0) -> None:
         """Asynchronously, blocks until all items in the Queue have been gotten and the registry is updated.

@@ -173,4 +173,4 @@ class RayProxy(ProxyInterface):
 
     # State
     def _is_alive(self) -> bool:
-        return self._proxy is not None and self._proxy._is_alive()
+        return self._actor is not None

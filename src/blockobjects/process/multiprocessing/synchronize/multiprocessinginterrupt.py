@@ -56,3 +56,13 @@ class MultiProcessingInterrupt(MultiProcessingEvent):
         if self.parent is not None and self.parent.is_set():
             self.set()
         return super().is_set()
+
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        if self.parent is not None and self.parent.is_set():
+            self.set()
+        return await super().is_set_async()

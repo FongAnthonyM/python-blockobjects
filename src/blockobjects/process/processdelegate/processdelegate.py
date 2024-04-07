@@ -73,13 +73,15 @@ class ProcessDelegate(BaseContextualObject):
 
         ignore = set()
         for name in cls._get_exposed():
-            method = getattr(cls, name, None)
+            func = getattr(cls, name, None)
+            if func is None:
+                raise AttributeError(f"'{cls.__name__}' object has no method '{name}'")
             if (
-                not isinstance(method, delegatemethod) and
-                not isinstance(getattr(method, "__func__", method), delegatemethod)
+                not isinstance(func, delegatemethod) and
+                not isinstance(getattr(func, "__wrapped__", func), delegatemethod)
             ):
                 wrapper_method = "local_call" if name in cls._local_ else delegatemethod._wrapper_method
-                d_method = delegatemethod(method, wrapper_method=wrapper_method)
+                d_method = delegatemethod(func, wrapper_method=wrapper_method)
                 setattr(cls, name, d_method)
                 ignore.add(name)
         cls._exposed_done = ignore
@@ -141,7 +143,7 @@ class ProcessDelegate(BaseContextualObject):
 
         # Set State
         if _state:
-            self.__setstate__(state=_state)
+            self.__setstate__(_state)
             self._is_proxy = False  # Ensure this object's proxy state is correct
 
         # Start Server

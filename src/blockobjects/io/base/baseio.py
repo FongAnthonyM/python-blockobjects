@@ -32,6 +32,7 @@ class IOMap(NamedTuple):
     links: dict[str, "IOMap"] | None = None
 
 
+# Todo: add readinesss check and default return value!
 class BaseIO(BaseObject):
     """An abstract class for IO objects."""
 

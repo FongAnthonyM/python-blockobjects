@@ -36,10 +36,10 @@ from src.blockobjects.process.context import ManagerContext
 from src.blockobjects.process.multiprocessing import MultiProcessingContext
 from src.blockobjects.process.processdelegate import ProcessDelegate
 from src.blockobjects.blocks import BaseBlock
+from src.rayblocks import RayContext
 
 # Definitions #
-if DEFAULT_PROCESS_CONTEXT.context is None:
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
 
 # Functions #
@@ -121,7 +121,7 @@ class TestBaseBlock(PerformanceTest):
 
         # Evaluate
         def evaluate(self, first=1, second=0, third=1, fourth=0) -> Any:
-            deadline = time.perf_counter() + 0.1
+            deadline = time.perf_counter() + 0.0
             while deadline >= time.perf_counter():
                 pass
             out_one = first * second
@@ -198,7 +198,6 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
         outputs = block.outputs.get_all()
-
 
     def test_run_proxy(self):
         block = self.ExampleOne(will_proxy=True, init_setup=False)

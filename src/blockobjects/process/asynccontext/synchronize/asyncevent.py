@@ -42,6 +42,14 @@ class AsyncEvent(Event, EventInterface):
 
     # Instance Methods  #
     # Event
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        return self._value
+
     def clear(self):
         """Reset the internal flag to false. Subsequently, coroutines calling
         wait() will block until set() is called to set the internal flag

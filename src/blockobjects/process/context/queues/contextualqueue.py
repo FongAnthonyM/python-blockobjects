@@ -49,7 +49,7 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
     def __init__(
         self,
         maxsize: int = 0,
-        space_wait: bool = False,
+        space_wait: bool = True,
         *,
         context: BaseProcessingContext | None = None,
         init: bool = True,
@@ -68,7 +68,7 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
     def construct(
         self,
         maxsize: int = 0,
-        space_wait: bool = False,
+        space_wait: bool = True,
         *,
         context: BaseProcessingContext | None = None,
     ) -> None:

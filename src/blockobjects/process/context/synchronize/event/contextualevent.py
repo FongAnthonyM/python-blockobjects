@@ -76,6 +76,14 @@ class ContextualEvent(BaseContextualObject, EventInterface):
         """
         return self.event.is_set()
 
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        return await self.event.is_set_async()
+
     def set(self) -> None:
         """Sets the event."""
         self.event.set()

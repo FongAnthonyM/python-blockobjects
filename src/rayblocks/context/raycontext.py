@@ -17,6 +17,7 @@ from typing import Any
 from weakref import ref
 
 # Third-Party Packages #
+from baseobjects.functions import BaseDecorator
 from ray import remote, method
 from ray.actor import ActorClass
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
@@ -104,11 +105,10 @@ class RayContext(BaseProcessingContext):
 
         if (a_cls := self.actor_class_register.get(cls, None)) is None:
             exp = c_cls.get_exposed(cls, exposed)
-            temp = type("temp", (cls,), {})
-            for name in exp:
-                m = getattr(temp, name)
-                setattr(temp, name, method(num_returns=1)(getattr(m, "__func__", m)))
-            self.actor_class_register[cls] = a_cls = remote(**_kwargs)(cls) if _kwargs else remote(cls)
+            w_cls = type(f"{cls.__name__}ActorWrapper", (cls,), {})
+            for n, decorator in ((n, d) for n in exp if isinstance(d := getattr(w_cls, n), BaseDecorator)):
+                setattr(w_cls, n, decorator.as_function())
+            self.actor_class_register[cls] = a_cls = remote(**_kwargs)(w_cls) if _kwargs else remote(w_cls)
             _kwargs = {}
 
         proxy = c_cls.new_actor_proxy(cls, a_cls, args, kwargs=kwargs, exposed=exposed, **_kwargs)

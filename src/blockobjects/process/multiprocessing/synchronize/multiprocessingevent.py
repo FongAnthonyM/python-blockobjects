@@ -57,6 +57,18 @@ class MultiProcessingEvent(Event, EventInterface):
         return self.is_set()
 
     # Instance Methods #
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        with self._cond:
+            if self._flag.acquire(False):
+                self._flag.release()
+                return True
+            return False
+
     def wait(self, timeout: float | None = None) -> bool:
         """Waits for the Event to be changed to set.
 

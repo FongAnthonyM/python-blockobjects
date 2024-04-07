@@ -30,13 +30,12 @@ from src.blockobjects.process.context import ManagerContext
 from src.blockobjects.process.multiprocessing import MultiProcessingContext
 from src.blockobjects.process.processdelegate import ProcessDelegate
 from src.blockobjects.blocks import BaseBlock
-from .test_bases import ClassTest
+from tests.test_bases import ClassTest
 from src.rayblocks import RayContext
 
 
 # Definitions #
-if DEFAULT_PROCESS_CONTEXT.context is None:
-    DEFAULT_PROCESS_CONTEXT.select_context("ray")
+DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
 
 # Classes #
@@ -44,6 +43,7 @@ class TestBaseBlock(ClassTest):
 
     class ExampleOne(BaseBlock):
         # Class Attributes #
+        # proxy_kwargs = {"num_cpus": 1}
         default_input_names = ("first", "second", "third", "fourth")
         default_required_input = ("first", "third")
         default_optional_input = {"second": 2, "fourth": 4}
@@ -57,17 +57,20 @@ class TestBaseBlock(ClassTest):
         def setup(self, *args: Any, **kwargs: Any) -> None:
             """A method for setting up the object."""
             self.setup_flag = True
+            #print("setup_flag")
 
         # Evaluate
         def evaluate(self, first=1, second=0, third=1, fourth=0) -> Any:
             out_one = first * second
             out_two = third * fourth
+            print("evaluate_flag")
             return out_one, out_two
 
         # Teardown
         def teardown(self, *args: Any, **kwargs: Any) -> None:
             """A method for setting up the object."""
             self.teardown_flag = True
+            #print("teardown_flag")
 
     def create_local_block(self):
         return self.ExampleOne()
@@ -138,13 +141,15 @@ class TestBaseBlock(ClassTest):
     async def local_start_async(self):
         block = self.ExampleOne(init_setup=False)
         block.start()
+
+        await sleep(1)
         block.inputs.put_all(first=2, third=3)
         block.inputs.put_all(first=3, third=2)
-        await sleep(0.2)
+        await sleep(0.1)
         outputs_1 = block.outputs.get_all()
         outputs_2 = block.outputs.get_all()
         block.stop()
-        await sleep(0.001)
+        await sleep(0.1)
         assert block.setup_flag
         assert block.teardown_flag
         assert outputs_1["out_one"] == 4
@@ -163,24 +168,18 @@ class TestBaseBlock(ClassTest):
         outputs_1 = block.outputs.get_all()
         outputs_2 = block.outputs.get_all()
 
+        block.stop()
+
         assert outputs_1["out_one"] == 4
         assert outputs_1["out_two"] == 12
         assert outputs_2["out_one"] == 6
         assert outputs_2["out_two"] == 8
-
-        block.stop()
-
         assert block.setup_flag
         assert block.teardown_flag
 
 
-
-
-
-
-
-
-
 # Main #
 if __name__ == "__main__":
-    pytest.main(["-v", "-s"])
+    # pytest.main(["-v", "-s"])
+    t = TestBaseBlock()
+    t.test_start_proxy()

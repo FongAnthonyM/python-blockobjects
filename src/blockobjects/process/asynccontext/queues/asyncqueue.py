@@ -28,9 +28,32 @@ from ...context import QueueInterface
 # Definitions #
 # Classes #
 class AsyncQueue(Queue, QueueInterface):
+    """Extends the asyncio Queue by adding async methods and interrupts for blocking methods.
+
+    Class Attributes:
+        _ignore_attributes: The attributes to not pickle when pickling.
+
+    Attributes:
+        tracking: Determines if this queue will track open tasks.
+        space_wait: Determines if this queue will wait for the queue space to enqueue an item.
+
+    Args:
+        maxsize: The maximum number items that can be in the queue.
+        space_wait: Determines if this queue will wait for the queue space to enqueue an item.
+    """
 
     # Attributes #
     tracking: bool = False
+    space_wait: bool = True
+
+    # Magic Methods #
+    # Construction/Destruction
+    def __init__(self, maxsize: int = 0, space_wait: bool = True) -> None:
+        # New Attributes #
+        self.space_wait: bool = space_wait
+
+        # Parent Attributes #
+        super().__init__(maxsize=maxsize)
 
     # Instance Methods #
     # State

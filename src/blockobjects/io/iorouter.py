@@ -269,7 +269,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        return await gather(*(v.get(*args, **kwargs) for v in self.data.values()))
+        return await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))
 
     def get_all(self, *args, **kwargs) -> dict[str, Any]:
         """Gets an item from all the IO objects.
@@ -285,7 +285,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        return dict(zip(self.data.keys(), await gather(*(v.get(*args, **kwargs) for v in self.data.values()))))
+        return dict(zip(self.data.keys(), await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))))
 
     def get_required(
         self,

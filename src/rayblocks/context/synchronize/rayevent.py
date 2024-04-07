@@ -57,13 +57,21 @@ class RayEvent(EventInterface):
         """Checks if the event is set."""
         return get(self._remote_event.is_set.remote())
 
+    async def is_set_async(self) -> bool:
+        """Asynchronously checks if the event is set.
+
+        Returns:
+            True if the event is set, otherwise False.
+        """
+        return await self._remote_event.is_set.remote()
+
     def set(self) -> None:
         """Sets the event."""
-        return self._remote_event.set.remote()
+        self._remote_event.set.remote()
 
     def clear(self) -> None:
         """Clears the event."""
-        return self._remote_event.clear.remote()
+        self._remote_event.clear.remote()
 
     def wait(self, timeout: float | None = None) -> bool:
         """Waits for the Event to be changed to set.

@@ -13,11 +13,11 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, sleep
-from asyncio.events import AbstractEventLoop, get_event_loop
+from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
+from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from abc import abstractmethod
 from collections.abc import Iterable
-from concurrent.futures import Future as ConcurrentFuture
+from collections import deque
 from contextlib import contextmanager
 from time import perf_counter
 from typing import ClassVar, Any
@@ -25,8 +25,8 @@ from warnings import warn
 
 # Third-Party Packages #
 from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
-from ...process import ProcessDelegate
-from ...process.context import ContextualEvent
+from ...process import ProcessDelegate, delegatemethod
+from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
 from ...io import IOManager
@@ -73,8 +73,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         **kwargs: Keyword arguments for inheritance.
     """
     # Class Attributes #
-    public_exposed = False
-    exposed: ClassVar[set] = {"run", "start"}
+    public_exposed: ClassVar[bool] = False
+    exposed: ClassVar[set] = {
+        "is_executing",
+        "is_loop_event",
+        "set_loop_event",
+        "clear_loop_event",
+        "run",
+        "start",
+        "join_execution_async"
+    }
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...]] = ()
@@ -86,12 +94,13 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     # Attributes #
     # Backend
     untransmittable = {"loop_event", "inputs", "outputs", "futures"}
-    async_event_loop: AbstractEventLoop
+    async_event_loop: AbstractEventLoop = get_event_loop()
 
     # State
-    loop_event: ContextualEvent
+    _loop_event: bool = False
     will_proxy: bool = False
     _is_executing: bool = False
+    _executing_waiters: deque[Future]
 
     # IO
     inputs: IOManager
@@ -127,12 +136,15 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
+        start_server: bool = False,
+        context: BaseProcessingContext | None = None,
+        _state: dict[str, Any] | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
         # New Attributes #
-        self.async_event_loop = get_event_loop()
-        self.loop_event = ContextualEvent()
+        # self.async_event_loop = get_event_loop()
+        self._executing_waiters = deque()
 
         self.inputs = IOManager()
         self.outputs = IOManager()
@@ -160,6 +172,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 init_io=init_io,
                 init_setup=init_setup,
                 setup_kwargs=setup_kwargs,
+                start_server=start_server,
+                context=context,
+                _state=_state,
                 **kwargs,
             )
 
@@ -183,7 +198,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             state: The attributes to build this object from.
         """
         super().__setstate__(state)
-        self.async_event_loop = get_event_loop()
+        # self.async_event_loop = get_event_loop()
 
     # Instance Methods #
     # Constructors/Destructors
@@ -194,6 +209,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
+        start_server: bool = False,
+        context: BaseProcessingContext | None = None,
+        _state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Constructs this object.
@@ -216,11 +234,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if init_io:
             self.construct_io()
 
-        if init_setup or (init_setup is None and self.init_setup):
+        if _state is None and (init_setup or (init_setup is None and self.init_setup)):
             self.setup(**({} if setup_kwargs is None else setup_kwargs))
 
         # Construct Parent #
-        super().construct(*args, **kwargs)
+        super().construct(*args, start_server=start_server, context=context, _state=_state, **kwargs)
 
     # State
     def is_executing(self) -> bool:
@@ -231,13 +249,38 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         """
         return self._is_executing
 
+    def _set_executing(self) -> None:
+        """Sets the state of this block to executing."""
+        self._is_executing = True
+
+    def _clear_executing(self) -> None:
+        """Sets the state of this block to not executing."""
+        if self._is_executing:
+            self._is_executing = False
+
+            for fut in self._executing_waiters:
+                if not fut.done():
+                    fut.set_result(True)
+
     @contextmanager
     def _executing_context_manager(self) -> None:
         try:
-            self._is_executing = True
+            self._set_executing()
             yield None
         finally:
-            self._is_executing = False
+            self._clear_executing()
+
+    def is_loop_event(self) -> bool:
+        """Gets whether this object is currently running an execution loop."""
+        return self._loop_event
+
+    def set_loop_event(self) -> None:
+        """Sets the execution loop event."""
+        self._loop_event = True
+
+    def clear_loop_event(self) -> None:
+        """Clears the execution loop event."""
+        self._loop_event = False
 
     # IO
     def one_output(self, output) -> tuple:
@@ -388,9 +431,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             await self._execute_async(*args, **kwargs)
 
     def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
-        while self.loop_event.is_set():
+        while self._loop_event:
             # Get Inputs
-            inputs = self.execute_input_async()
+            inputs = self.execute_input()
             if any((inputs[n]) for n in self.inputs.required):
                 self.loop_event.clear()
                 continue
@@ -399,7 +442,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             output = self.evaluate(**inputs)
 
             # Outputs
-            self.execute_output_async(output)
+            self.execute_output(output)
 
     async def _execution_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively until an event stops it."""
@@ -407,11 +450,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
 
         # Loop the evaluation
-        while self.loop_event.is_set():
+        while self._loop_event:
             # Get Inputs
             inputs = await create_task(self.execute_input_async())
             if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.required):
-                self.loop_event.clear()
+                self._loop_event = False
                 continue
 
             # Evaluate
@@ -484,7 +527,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         s_kwargs: dict[str, Any] | None = None,
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-    ) -> Future | None:
+    ) -> None:
         """Runs a single execution of the block, delegating to another process if selected.
 
         Args:
@@ -502,8 +545,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if not self.is_alive():
                 self._start_server()
             self._proxy.run(s_kwargs, e_kwargs, t_kwargs)
-        elif self.async_event_loop.is_running():
-            return run_coroutine_threadsafe(self._run(s_kwargs, e_kwargs, t_kwargs), self.async_event_loop)
+        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+            run_coroutine_threadsafe(self._run(s_kwargs, e_kwargs, t_kwargs), loop)
         else:
             self._run_async_loop(s_kwargs, e_kwargs, t_kwargs)
 
@@ -550,7 +593,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         """
         # Flag On
         with self._executing_context_manager():
-            self.loop_event.set()
+            self._loop_event = True
 
             # Optionally Setup
             if self.sets_up:
@@ -588,7 +631,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         s_kwargs: dict[str, Any] | None = None,
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
-    ) -> Future | None:
+    ) -> None:
         """Starts the continuous execution of the block, delegating to another process if selected.
 
         Args:
@@ -606,8 +649,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if not self.is_alive():
                 self._start_server()
             self._proxy.start(s_kwargs, e_kwargs, t_kwargs)
-        elif self.async_event_loop.is_running():
-            return run_coroutine_threadsafe(self._start(s_kwargs, e_kwargs, t_kwargs), self.async_event_loop)
+        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+            run_coroutine_threadsafe(self._start(s_kwargs, e_kwargs, t_kwargs), loop)
         else:
             self._start_async_loop(s_kwargs, e_kwargs, t_kwargs)
 
@@ -639,45 +682,20 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             await self._start(s_kwargs, e_kwargs, t_kwargs)
 
     # Join Execution
-    def _join_execution(self, timeout: float | None = None) -> None:
-        """Waits until the execution of the block has finished.
-
-        Args:
-            timeout: The time, in seconds, to wait for the block to finish.
-        """
-        if timeout is None:
-            while self._is_executing:
-                pass
-        else:
-            deadline = perf_counter() + timeout
-            while self._is_executing:
-                if deadline <= perf_counter():
-                    return
-
     def join_execution(self, timeout: float | None = None) -> None:
         """Waits until the execution of the block has finished.
 
         Args:
             timeout: The time, in seconds, to wait for the block to finish.
         """
-        self._join_execution(timeout)
-
-    async def _join_execution_async(self, timeout: float | None = None, interval: float = 0.0) -> None:
-        """Asynchronously waits until the execution of the block has finished.
-
-        Args:
-            timeout: The time, in seconds, to wait for the block to finish.
-            interval: The time, in seconds, between each join check.
-        """
         if timeout is None:
-            while self._is_executing:
-                await sleep(interval)
+            while self.is_executing():
+                pass
         else:
             deadline = perf_counter() + timeout
-            while self._is_executing:
+            while self.is_executing():
                 if deadline <= perf_counter():
                     return
-                await sleep(interval)
 
     async def join_execution_async(self, timeout: float | None = None, interval: float = 0.0) -> None:
         """Asynchronously waits until the execution of the block has finished.
@@ -686,7 +704,14 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             timeout: The time, in seconds, to wait for the block to finish.
             interval: The time, in seconds, between each join check.
         """
-        await self._join_execution_async(timeout, interval)
+        if self._loop_event:
+            fut = self.async_event_loop.create_future()
+            self._executing_waiters.append(fut)
+
+            try:
+                await wait_for(fut, timeout)
+            finally:
+                self._executing_waiters.remove(fut)
 
     # Stop Block Continuous Execution
     def stop(self, server: bool = True, update: bool = True) -> None:
@@ -696,7 +721,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             server: Determines if the remote server should be stopped.
             update: Determines if this object should be updated from the server before stopping.
         """
-        self.loop_event.clear()
+        self.clear_loop_event()
         self.inputs.put_break_sentinel()
         if self.is_alive() and server:
             if update:
@@ -710,7 +735,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             server: Determines if the remote server should be stopped.
             update: Determines if this object should be updated from the server before stopping.
         """
-        self.loop_event.clear()
+        self.clear_loop_event()
         await self.inputs.put_break_sentinel_async()
         if self.is_alive() and server:
             if update:

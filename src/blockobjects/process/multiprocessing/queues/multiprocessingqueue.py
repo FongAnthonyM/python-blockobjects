@@ -54,11 +54,11 @@ class MultiProcessingQueue(Queue, QueueInterface):
     # Attributes #
     get_interrupt: MultiProcessingInterrupt
     put_interrupt: MultiProcessingInterrupt
-    space_wait: bool
+    space_wait: bool = True
 
     # Magic Methods #
     # Construction/Destruction
-    def __init__(self, maxsize: int = 0, space_wait: bool = False, *, ctx: BaseContext | None = None) -> None:
+    def __init__(self, maxsize: int = 0, space_wait: bool = True, *, ctx: BaseContext | None = None) -> None:
         # New Attributes #
         self.get_interrupt = MultiProcessingInterrupt()
         self.put_interrupt = MultiProcessingInterrupt()
@@ -252,7 +252,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
     def put(
         self,
         value: Any,
-        block: bool = True,
+        block: bool | None = None,
         timeout: float | None = None,
         *args: Any,
         **kwargs: Any,
@@ -272,10 +272,8 @@ class MultiProcessingQueue(Queue, QueueInterface):
             raise ValueError(f"Queue {self!r} is closed")
 
         # Try to put a value without blocking.
-        if not block:
-            super().put(value=value, block=block, timeout=timeout)
-            return
-
+        if not (block or (block is None and self.space_wait)):
+            return super().put(value, block=False, timeout=timeout)
         # Try to put a value without timing out.
         elif timeout is None:
             while not self.put_interrupt.is_set():
@@ -286,7 +284,6 @@ class MultiProcessingQueue(Queue, QueueInterface):
                         self._buffer.append(value)
                         self._notempty.notify()
                         return
-
         # Try to put a value and timing out when specified.
         else:
             deadline = perf_counter() + timeout
@@ -307,6 +304,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
     async def put_async(
         self,
         value: Any,
+        block: bool | None = None,
         timeout: float | None = None,
         interval: float = 0.0,
         *args: Any,
@@ -316,6 +314,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
 
         Args:
             value: The value to put into the queue.
+            block: Determines if this method will block execution.
             timeout: The time, in seconds, to wait for space in the queue.
             interval: The time, in seconds, between each access check.
 
@@ -323,7 +322,11 @@ class MultiProcessingQueue(Queue, QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        if timeout is None:
+        # Try to put a value without blocking.
+        if not (block or (block is None and self.space_wait)):
+            return super().put(value, block=False, timeout=timeout)
+        # Try to put a value without timing out.
+        elif timeout is None:
             while not self.put_interrupt.is_set():
                 if self._sem.acquire(block=False):
                     with self._notempty:
@@ -334,6 +337,7 @@ class MultiProcessingQueue(Queue, QueueInterface):
                         return
 
                 await sleep(interval)
+        # Try to put a value and timing out when specified.
         else:
             deadline = perf_counter() + timeout
             while not self.put_interrupt.is_set():
