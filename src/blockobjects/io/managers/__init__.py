@@ -13,7 +13,6 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .baseio import IOMap, BaseIO
-from .baseiomultiplexer import BaseIOMultiplexer
-from .iodelegator import IODelegator
-from .iowrapper import IOWrapper
+from .baseiomanager import BaseIOManager
+from .contextualiomanager import ContextualIOManager
+from .delegatingiomanager import DelegatingIOManager

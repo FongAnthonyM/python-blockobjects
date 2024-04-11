@@ -39,7 +39,7 @@ from src.blockobjects.blocks import BaseBlock
 from src.rayblocks import RayContext
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("ray")
+DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
 
 # Functions #
@@ -109,6 +109,7 @@ class TestBaseBlock(PerformanceTest):
         default_required_input = ("first", "third")
         default_optional_input = {"second": 2, "fourth": 4}
         default_output_names = ("out_one", "out_two")
+        resources = {"num_cpu": 0}
 
         # Attributes #
         setup_flag: bool = False
@@ -121,7 +122,7 @@ class TestBaseBlock(PerformanceTest):
 
         # Evaluate
         def evaluate(self, first=1, second=0, third=1, fourth=0) -> Any:
-            deadline = time.perf_counter() + 0.0
+            deadline = time.perf_counter() + 0.1
             while deadline >= time.perf_counter():
                 pass
             out_one = first * second
@@ -251,6 +252,7 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_start_profile(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start()
 
@@ -271,4 +273,6 @@ class TestBaseBlock(PerformanceTest):
 
 # Main #
 if __name__ == "__main__":
-    pytest.main(["-v", "-s"])
+    # pytest.main(["-v", "-s"])
+    t = TestBaseBlock()
+    t.test_io_start_profile()

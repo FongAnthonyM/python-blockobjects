@@ -87,10 +87,6 @@ class BaseProcessingContext(BaseObject):
         self.object_register = {n: {} for n in object_categories}
 
     # Instance Methods #
-    # Constructors/Destructors
-    def construct(self) -> None:
-        super().construct()
-
     # Context Objects
     def create_lock(self, name=None, *args, cls=None, **kwargs) -> LockInterface:
         """Creates and adds a lock to the context's object register.

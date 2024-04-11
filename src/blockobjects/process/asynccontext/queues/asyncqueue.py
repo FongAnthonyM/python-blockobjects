@@ -84,31 +84,22 @@ class AsyncQueue(Queue, QueueInterface):
             InterruptedError: When this method is interrupted by the interrupt event.
         """
         if block:
+            print(f"block, empty: {self.empty()} poll {self.poll()}")
             while self.empty():
-                getter = self._get_loop().create_future()
-                self._getters.append(getter)
                 try:
                     if timeout is None:
-                        while not getter.done():
+                        while not self.poll():
                             pass
                     else:
                         deadline = perf_counter() + timeout
-                        while not getter.done():
+                        while not self.poll():
                             if deadline is not None and deadline <= perf_counter():
                                 if default is search_sentinel:
                                     raise TimeoutError
                                 else:
                                     return default
                 except:
-                    getter.cancel()  # Just in case getter is not done yet.
-                    try:
-                        # Clean self._getters from canceled getters.
-                        self._getters.remove(getter)
-                    except ValueError:
-                        # The getter could be removed from self._getters by a
-                        # previous put_nowait call.
-                        pass
-                    if not self.empty() and not getter.cancelled():
+                    if not self.empty():
                         # We were woken up by put_nowait(), but can't take
                         # the call.  Wake up the next in line.
                         self._wakeup_next(self._getters)
@@ -146,6 +137,7 @@ class AsyncQueue(Queue, QueueInterface):
             Empty: When there are no items to get in the queue when not blocking or on timing out.
         """
         if block:
+            print(f"block, empty: {self.empty()} poll {self.poll()}")
             while self.empty():
                 getter = self._get_loop().create_future()
                 self._getters.append(getter)

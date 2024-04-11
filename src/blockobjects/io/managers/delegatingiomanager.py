@@ -1,8 +1,8 @@
-""" iomanager.py
+""" delegatingiomanager.py
 An IO object which maps named inputs to names outputs in a one-to-one manner.
 """
 # Package Header #
-from ..header import *
+from ...header import *
 
 # Header #
 __author__ = __author__
@@ -13,20 +13,19 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import gather
-from collections.abc import Iterable
-from typing import ClassVar, Any
+from typing import ClassVar
+from types import MethodType
 
 # Third-Party Packages #
-from ..process import ProcessDelegate
+from src.blockobjects.process import ProcessDelegate
 
 # Local Packages #
-from .iorouter import IORouter
+from .contextualiomanager import ContextualIOManager
 
 
 # Definitions #
 # Classes #
-class IOManager(IORouter, ProcessDelegate):
+class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     """An IO object which maps named inputs to names outputs in a one-to-one manner.
 
     Class Attributes:
@@ -47,8 +46,29 @@ class IOManager(IORouter, ProcessDelegate):
 
     # Class Attributes #
     unexposed: ClassVar[set] = {"default_io"}
+    local_methods: ClassVar[set] = {"set_callback_methods"}
 
     default_get: ClassVar[str] = "get_required"
     default_get_async: ClassVar[str] = "get_required_async"
     default_put: ClassVar[str] = "put_ordered"
     default_put_async: ClassVar[str] = "put_ordered_async"
+    default_create_link: ClassVar[str] = "create_io_wrapper"
+
+    # Attributes #
+    # State
+    will_proxy: bool = False
+
+    # Linking
+    def is_link_endpoint(self) -> bool:
+        return not self.will_proxy
+
+    def set_callback_methods(self, method, method_async) -> None:
+        if self.is_proxy():
+            if (weak := getattr(method, "_self_", None)) is not None:
+                method = MethodType(method.__wrapped__, weak())
+            if (weak := getattr(method_async, "_self_", None)) is not None:
+                method_async = MethodType(method_async.__wrapped__, weak())
+            self._proxy.set_callback_methods(method, method_async)
+        else:
+            self.callback_method = method
+            self.callback_method_async = method_async

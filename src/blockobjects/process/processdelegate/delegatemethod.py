@@ -70,7 +70,7 @@ class delegatemethod(BaseDecorator):
         if method is not None:
             self.proxy_method = method
 
-        super().construct(func=func, *args, **kwargs)
+        super().construct(func=func, *args, wrapper_method=wrapper_method, **kwargs)
 
     # Calling
     def local_call(self, obj: "ProcessDelegate", *args: Any, **kwargs: Any) -> Any:

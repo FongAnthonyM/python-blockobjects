@@ -13,6 +13,4 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from src.blockobjects.io.synchronize.event.event import AsyncEvent
 from .interrupt import *
-from src.blockobjects.io.synchronize.lock.asynclock import AsyncLock

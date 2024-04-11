@@ -185,7 +185,7 @@ class RayQueue(QueueInterface):
             Full: When there is no more space to put an item in the queue when not blocking or on timing out.
             InterruptedError: When this method is interrupted by the interrupt event.
         """
-        self._remote_queue.put_async.remote(value, block, timeout, *args, **kwargs)
+        await self._remote_queue.put_async.remote(value, block, timeout, *args, **kwargs)
 
     def put_nowait(self, value: Any) -> None:
         """Equivalent to put(item, block=False).

@@ -106,6 +106,8 @@ class RayContext(BaseProcessingContext):
         if (a_cls := self.actor_class_register.get(cls, None)) is None:
             exp = c_cls.get_exposed(cls, exposed)
             w_cls = type(f"{cls.__name__}ActorWrapper", (cls,), {})
+            if hasattr(cls, "__class_getitem__"):
+                w_cls.__class_getitem__ = None
             for n, decorator in ((n, d) for n in exp if isinstance(d := getattr(w_cls, n), BaseDecorator)):
                 setattr(w_cls, n, decorator.as_function())
             self.actor_class_register[cls] = a_cls = remote(**_kwargs)(w_cls) if _kwargs else remote(w_cls)

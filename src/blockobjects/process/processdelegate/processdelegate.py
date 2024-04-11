@@ -21,13 +21,13 @@ from baseobjects import search_sentinel
 from baseobjects.operations import iter_public_method_names
 
 # Local Packages #
-from ..context import BaseProcessingContext, BaseContextualObject, ProxyInterface
+from ..context import BaseProcessingContext, ContextualObjectInterface, ProxyInterface
 from .delegatemethod import delegatemethod
 
 
 # Definitions #
 # Classes #
-class ProcessDelegate(BaseContextualObject):
+class ProcessDelegate(ContextualObjectInterface):
     """
 
     Class Attributes:
@@ -46,11 +46,8 @@ class ProcessDelegate(BaseContextualObject):
     _unexposed_: ClassVar[set] = {"is_proxy", "is_alive",  "get_context", "set_context"}
     unexposed: ClassVar[set] = set()
 
-    _local_: ClassVar[set] = {"stop_server", "set_server_state", "update", "update_server"}
-
-    # Attributes #
-    untransmittable: set = set()
-    proxy_kwargs: dict[str, Any] = {}
+    _local_methods_: ClassVar[set] = {"stop_server", "set_server_state", "update", "update_server"}
+    local_methods: ClassVar[set] = set()
 
     # Class Methods #
     @classmethod
@@ -80,14 +77,20 @@ class ProcessDelegate(BaseContextualObject):
                 not isinstance(func, delegatemethod) and
                 not isinstance(getattr(func, "__wrapped__", func), delegatemethod)
             ):
-                wrapper_method = "local_call" if name in cls._local_ else delegatemethod._wrapper_method
+                if name in (cls._local_methods_ | cls.local_methods):
+                    wrapper_method = "local_call"
+                else:
+                    wrapper_method = delegatemethod._wrapper_method
                 d_method = delegatemethod(func, wrapper_method=wrapper_method)
                 setattr(cls, name, d_method)
                 ignore.add(name)
         cls._exposed_done = ignore
 
-    # Attributes
+    # Attributes #
+    _proxy_context: BaseProcessingContext
+    untransmittable: set = set()
     _is_proxy: bool = False
+    proxy_kwargs: dict[str, Any] = {}
     _proxy: ProxyInterface | None = None
 
     # Magic Methods #
@@ -96,7 +99,7 @@ class ProcessDelegate(BaseContextualObject):
         self,
         *,
         start_server: bool = False,
-        context: BaseProcessingContext | None = None,
+        proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
         init: bool = True,
     ) -> None:
@@ -107,7 +110,7 @@ class ProcessDelegate(BaseContextualObject):
 
         # Object Construction #
         if init:
-            self.construct(start_server=start_server, context=context, _state=_state)
+            self.construct(start_server=start_server, proxy_context=proxy_context, _state=_state)
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -128,7 +131,7 @@ class ProcessDelegate(BaseContextualObject):
         self,
         *,
         start_server: bool = False,
-        context: BaseProcessingContext | None = None,
+        proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
     ) -> None:
         """Constructs this object.
@@ -138,8 +141,11 @@ class ProcessDelegate(BaseContextualObject):
             context: The context of this Queue.
             _state: A dictionary of attributes which can be used to this object.
         """
+        if proxy_context is not None:
+            self._proxy_context = proxy_context
+
         # Construct Parent
-        super().construct(context=context)
+        super().construct()
 
         # Set State
         if _state:
@@ -266,7 +272,12 @@ class ProcessDelegate(BaseContextualObject):
             kwargs["_state"] = self.__getstate__()
 
         # Start Server by creating a proxy from the context
-        self._proxy = self.context.create_proxy(cls=self.__class__, args=args, kwargs=kwargs, **self.proxy_kwargs)
+        self._proxy = self._proxy_context.create_proxy(
+            cls=self.__class__,
+            args=args,
+            kwargs=kwargs,
+            **self.proxy_kwargs,
+        )
 
         # Ensure that this object's state is a proxy
         self._is_proxy = True
@@ -312,24 +323,32 @@ class ProcessDelegate(BaseContextualObject):
                 raise RuntimeError("Server process must be alive")
 
     # Processing Context
-    def get_context(self) -> BaseProcessingContext:
+    def get_proxy_context(self) -> BaseProcessingContext:
         """Gets the context of this object.
 
         Returns:
             The context of this object.
         """
-        return self._proxy.context if self._is_proxy else self._context
+        if self._is_proxy and (context := getattr(self._proxy, "_ContextualProxy__context", None)) is not None:
+            return context
+        else:
+            return self._proxy_context
 
-    def set_context(self, context: BaseProcessingContext) -> None:
+    def set_proxy_context(self, context: BaseProcessingContext) -> None:
         """Sets the context of this object to the given context.
 
         Args:
             context: The context to assign this object to.
         """
-        super().set_context(context=context)
+        self._proxy_context = context
 
         # Create a new server and proxy
         if self._is_proxy:
             self.update()  # Update local attributes
-            self.proxy.set_context(context)  # Set the proxy's context
-            self.update_server()  # Update server attributes
+            # Set the proxy's context
+            if (set_context := getattr(self._proxy, "_ContextualProxy__set_context", None)) is not None:
+                set_context(context)
+                self.update_server()  # Update server attributes
+            else:
+                self._proxy = self._proxy_context.create_proxy(cls=self.__class__, **self.proxy_kwargs)
+

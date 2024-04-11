@@ -1,5 +1,5 @@
-""" ioqueue.py
-An IO object which stores values within it using a queue
+""" delegatingiomanager.py
+An IO object which maps named inputs to names outputs in a one-to-one manner.
 """
 # Package Header #
 from ...header import *
@@ -17,11 +17,10 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-from ...process import ContextualQueue
-from ..base import BaseIO
+from ..routers import IORouter
 
 
 # Definitions #
 # Classes #
-class IOQueue(ContextualQueue, BaseIO):
-    """An IO object which stores values within it using a queue."""
+class BaseIOManager(IORouter):
+    """An abstract base class for an IO Manager which is an IORouter with more IO manipulation."""

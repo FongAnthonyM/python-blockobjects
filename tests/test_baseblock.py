@@ -35,7 +35,7 @@ from src.rayblocks import RayContext
 
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
 
 # Classes #
@@ -70,7 +70,7 @@ class TestBaseBlock(ClassTest):
         def teardown(self, *args: Any, **kwargs: Any) -> None:
             """A method for setting up the object."""
             self.teardown_flag = True
-            #print("teardown_flag")
+            print("teardown_flag")
 
     def create_local_block(self):
         return self.ExampleOne()
@@ -177,9 +177,25 @@ class TestBaseBlock(ClassTest):
         assert block.setup_flag
         assert block.teardown_flag
 
+    def test_start_passive_proxy(self):
+        block = self.ExampleOne(will_proxy=True, init_setup=False)
+        block.start_passive()
+
+        block.inputs.put_required_callback_async("first", 2)
+        block.inputs.put_required_callback_async("third", 3)
+
+        outputs_1 = block.outputs.get_all_async()
+
+        block.stop_passive()
+
+        assert outputs_1["out_one"] == 4
+        assert outputs_1["out_two"] == 12
+        assert block.setup_flag
+        assert block.teardown_flag
+
 
 # Main #
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_start_proxy()
+    t.test_start_passive_proxy()
