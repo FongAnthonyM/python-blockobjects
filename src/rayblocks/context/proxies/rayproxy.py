@@ -31,7 +31,7 @@ from ray.actor import ActorClass, ActorHandle
 # Definitions #
 # Classes #
 class RayProxy(ProxyInterface):
-    # Class Attributes
+    # Class Attributes #
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
     _exposed_: ClassVar[set] = set()
     _unexposed_: ClassVar[set] = set()
@@ -84,7 +84,10 @@ class RayProxy(ProxyInterface):
             proxy_classes[key] = proxy_class = type(name, (cls,), {})
             for name in exposed:
                 is_coro = iscoroutinefunction(getattr(target_cls, name))
-                setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
+                if not is_coro and (a_name := f"{name}_async") in exposed:
+                    setattr(proxy_class, name, cls._create_proxy_method(a_name, False))
+                else:
+                    setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
             proxy_class.exposed = set(exposed)
 
         # Return Proxy Class

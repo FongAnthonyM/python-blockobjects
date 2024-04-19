@@ -23,6 +23,7 @@ from os import getpid
 
 # Third-Party Packages #
 import pytest
+import ray
 
 # Local Packages #
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
@@ -70,7 +71,7 @@ class TestBaseBlock(ClassTest):
         def teardown(self, *args: Any, **kwargs: Any) -> None:
             """A method for setting up the object."""
             self.teardown_flag = True
-            print("teardown_flag")
+            #print("teardown_flag")
 
     def create_local_block(self):
         return self.ExampleOne()
@@ -160,6 +161,49 @@ class TestBaseBlock(ClassTest):
     def test_local_start_async(self):
         run(self.local_start_async())
 
+    async def local_start_passive_async(self):
+        block = self.ExampleOne(init_setup=False)
+        block.start_passive()
+
+        await block.inputs.put_required_callback_async("first", 2)
+        await block.inputs.put_required_callback_async("third", 3)
+        outputs_1 = await block.outputs.get_all_async()
+
+        await block.stop_passive_async()
+
+        assert block.setup_flag
+        assert block.teardown_flag
+        assert outputs_1["out_one"] == 4
+        assert outputs_1["out_two"] == 12
+
+    def test_local_start_passive_async(self):
+        run(self.local_start_passive_async())
+
+    async def local_multiple_start_passive_async(self):
+        block1 = self.ExampleOne(init_setup=False)
+        block2 = self.ExampleOne(init_setup=False)
+
+        block1.outputs.link_forward("out_one", block2.inputs, "first")
+        block1.outputs.link_forward("out_two", block2.inputs, "third")
+
+        block1.start_passive()
+        block2.start_passive()
+
+        await block1.inputs.put_required_callback_async("first", 2)
+        await block1.inputs.put_required_callback_async("third", 3)
+        outputs_1 = await block2.outputs.get_all_async()
+
+        await block1.stop_passive_async()
+        await block2.stop_passive_async()
+
+        assert block1.setup_flag
+        assert block1.teardown_flag
+        assert outputs_1["out_one"] == 8
+        assert outputs_1["out_two"] == 48
+
+    def test_local_multiple_start_passive_async(self):
+        run(self.local_multiple_start_passive_async())
+
     def test_start_proxy(self):
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start()
@@ -178,13 +222,14 @@ class TestBaseBlock(ClassTest):
         assert block.teardown_flag
 
     def test_start_passive_proxy(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start_passive()
 
-        block.inputs.put_required_callback_async("first", 2)
-        block.inputs.put_required_callback_async("third", 3)
+        block.inputs.put_required_callback("first", 2)
+        block.inputs.put_required_callback("third", 3)
 
-        outputs_1 = block.outputs.get_all_async()
+        outputs_1 = block.outputs.get_all()
 
         block.stop_passive()
 
@@ -193,9 +238,40 @@ class TestBaseBlock(ClassTest):
         assert block.setup_flag
         assert block.teardown_flag
 
+    def test_multiple_start_passive_proxy(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        block1 = self.ExampleOne(will_proxy=True, init_setup=False)
+        block2 = self.ExampleOne(will_proxy=True, init_setup=False)
+
+        block1.outputs.link_forward("out_one", block2.inputs, "first")
+        block1.outputs.link_forward("out_two", block2.inputs, "third")
+
+        block1.inputs.start_server()
+        block1.outputs.start_server()
+        block2.inputs.start_server()
+        block2.outputs.start_server()
+
+        block1.outputs.update_server_io()
+
+        block1.start_passive()
+        block2.start_passive()
+
+        block1.inputs.put_required_callback("first", 2)
+        block1.inputs.put_required_callback("third", 3)
+
+        outputs_1 = block2.outputs.get_all()
+
+        block1.stop_passive()
+        block2.stop_passive()
+
+        assert outputs_1["out_one"] == 8
+        assert outputs_1["out_two"] == 48
+        assert block1.setup_flag
+        assert block1.teardown_flag
+
 
 # Main #
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_start_passive_proxy()
+    t.test_local_multiple_start_passive_async()

@@ -36,14 +36,14 @@ from ...io import DelegatingIOManager
 # Definitions #
 # Classes #
 class BaseBlock(ProcessDelegate, CallableMultiplexObject):
-    """An abstract class which defines an Operation, an easily definable data processing block with inputs and outputs.
+    """An abstract class which defines a Block, an easily definable data processing block with inputs and outputs.
 
     In subclasses the "evaluate" method must be defined as it is data processing element of this object. Additionally,
     the "input_names" and "output_names" must be defined to ensure the IO is mapped properly. "input_names" must match
     the keyword arguments of the "evaluate" method. "output_names" are names for each of the elements of the outputs
     tuple of the "evaluate" method.
 
-    "evaluate" can be called directly which will run without using the Operation IO. This is useful for processing data
+    "evaluate" can be called directly which will run without using the Block IO. This is useful for processing data
     without using the Object IO architecture.
 
     To use the Object IO architecture "execute" should be called. "execute" first gets the inputs from the inputs
@@ -51,19 +51,19 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     outputs manager to be used later.
 
     "execute" is also MethodMultiplexer, meaning that its call is delegated to different specified method. This gives
-    Operation the flexibility to change the "execute" method's implementation during runtime.
+    Block the flexibility to change the "execute" method's implementation during runtime.
 
     Class Attributes:
         default_execute: The default name of the method to use for execution.
-        default_input_names: The default ordered tuple with the names of the inputs to an Operation.
-        default_output_names: The default ordered tuple with the names of the outputs to an Operation.
+        default_input_names: The default ordered tuple with the names of the inputs to an Block.
+        default_output_names: The default ordered tuple with the names of the outputs to an Block.
 
     Attributes:
-        inputs: The inputs manager of the Operation.
-        outputs: The outputs manager of the Operation.
+        inputs: The inputs manager of the Block.
+        outputs: The outputs manager of the Block.
         execute: The method multiplexer which manages which execute method to run when called.
-        input_names: The ordered tuple with the names of the inputs to an Operation.
-        _output_names: The ordered tuple with the names of the outputs to an Operation.
+        input_names: The ordered tuple with the names of the inputs to an Block.
+        _output_names: The ordered tuple with the names of the outputs to an Block.
 
     Args:
         *args: Arguments for inheritance.
@@ -325,6 +325,25 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         self.set_io_execution()
 
+    def start_inputs(self) -> None:
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+
+    def start_outputs(self) -> None:
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    def materialize_io_links(self) -> None:
+        if self.inputs.is_proxy():
+            self.inputs.update_server_io()
+        if self.outputs.is_proxy():
+            self.outputs.update_server_io()
+
+    def finalize_io_links(self) -> None:
+        self.start_inputs()
+        self.start_outputs()
+        self.materialize_io_links()
+
     def set_io_execution(self) -> None:
         match len(self.inputs):
             case 0:
@@ -364,7 +383,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Use BaseMethod because it uses weak references
         method = BaseMethod(func=callback, instance=self)
         method_async = BaseMethod(func=callback_async, instance=self)
-        self.inputs.set_callback_methods(method, method_async)
+        self.inputs.set_callbacks(method, method_async)
 
     def set_input_callback_proxy(self, name: str | None = None, name_async: str | None = None) -> None:
         if name is None:
@@ -382,7 +401,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Use BaseMethod because it uses weak references
         method = BaseMethod(func=callback, instance=self._proxy)
         method_async = BaseMethod(func=callback_async, instance=self._proxy)
-        self.inputs.set_callback_methods(method, method_async)
+        self.inputs.set_callbacks(method, method_async)
 
     def one_output(self, output) -> tuple:
         """Formats an output if was the only output of the block."""
@@ -835,16 +854,15 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Run as Proxy
         if as_proxy or (as_proxy is None and self.will_proxy):
             if not self.is_alive():
-                if not self.inputs.is_alive():
-                    self.inputs.start_server()
-                if not self.outputs.is_alive():
-                    self.outputs.start_server()
+                self.finalize_io_links()
                 self._start_server()
                 self.set_input_callback_proxy()
             self._proxy.start_passive(None, s_kwargs)
         elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+            self.set_input_callback()
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
+            self.set_input_callback()
             self._start_passive_async_loop(s_kwargs)
 
     async def start_passive_async(
@@ -865,7 +883,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Use Correct Context
         if as_proxy or (as_proxy is None and self.will_proxy):
             if not self.is_alive():
+                self.finalize_io_links()
                 self._start_server()
+                self.set_input_callback_proxy()
             await self._proxy.start_passive_async(None, s_kwargs)
         else:
             await self._start_passive(s_kwargs)
@@ -902,11 +922,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             server: Determines if the remote server should be stopped.
             update: Determines if this object should be updated from the server before stopping.
         """
-        self._proxy.stop_passive_server(t_kwargs)
         if self.is_alive() and server:
+            self._proxy.stop_passive_server(t_kwargs)
             if update:
                 self.join_execution()
             self._stop_server(update)
+        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+            self.set_input_callback()
+            run_coroutine_threadsafe(self._stop_passive(t_kwargs), loop)
+        else:
+            run(self._stop_passive(t_kwargs))
 
     async def stop_passive_async(
         self,
@@ -920,11 +945,13 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             server: Determines if the remote server should be stopped.
             update: Determines if this object should be updated from the server before stopping.
         """
-        await self._proxy.stop_passive_server(t_kwargs)
         if self.is_alive() and server:
+            await self._proxy.stop_passive_server(t_kwargs)
             if update:
                 await self.join_execution_async()
             self._stop_server(update)
+        else:
+            await self._stop_passive(t_kwargs)
 
     # Join Execution
     def join_execution(self, timeout: float | None = None) -> None:

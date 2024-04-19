@@ -113,7 +113,7 @@ class RayContext(BaseProcessingContext):
             self.actor_class_register[cls] = a_cls = remote(**_kwargs)(w_cls) if _kwargs else remote(w_cls)
             _kwargs = {}
 
-        proxy = c_cls.new_actor_proxy(cls, a_cls, args, kwargs=kwargs, exposed=exposed, **_kwargs)
+        proxy = c_cls.new_actor_proxy(cls, a_cls, args, kwargs=kwargs, exposed=exposed)
 
         self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = ref(proxy)
         return proxy

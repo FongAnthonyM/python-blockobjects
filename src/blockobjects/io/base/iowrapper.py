@@ -101,7 +101,7 @@ class IOWrapper(BaseIO):
             **kwargs: The keyword arguments for putting the item.
         """
         try:
-            return self.putter(*args, **kwargs)
+            return self.putter(value, *args, **kwargs)
         except AttributeError:
             raise AttributeError(f"{self} has no putter")
 
@@ -114,6 +114,6 @@ class IOWrapper(BaseIO):
             **kwargs: The keyword arguments for putting the item.
         """
         try:
-            return await self.putter_async(*args, **kwargs)
+            return await self.putter_async(value, *args, **kwargs)
         except AttributeError:
             raise AttributeError(f"{self} has no putter_async")

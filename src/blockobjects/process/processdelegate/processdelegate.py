@@ -90,7 +90,8 @@ class ProcessDelegate(ContextualObjectInterface):
     _proxy_context: BaseProcessingContext
     untransmittable: set = set()
     _is_proxy: bool = False
-    proxy_kwargs: dict[str, Any] = {}
+
+    proxy_kwargs: dict[str, dict[str, Any]] = {}
     _proxy: ProxyInterface | None = None
 
     # Magic Methods #
@@ -120,9 +121,6 @@ class ProcessDelegate(ContextualObjectInterface):
             A dictionary of this object's attributes.
         """
         state = super().__getstate__()
-        for name in ("_proxy", "_is_proxy",):
-            if name in state:
-                del state[name]
         return state
 
     # Instance Methods #
@@ -271,12 +269,17 @@ class ProcessDelegate(ContextualObjectInterface):
         if "_state" not in (kwargs := kwargs or {}):
             kwargs["_state"] = self.__getstate__()
 
+        if (c_name := getattr(self._proxy_context, "selected", None)) is not None:
+            p_kwargs = self.proxy_kwargs.get(c_name, {})
+        else:
+            p_kwargs = self.proxy_kwargs
+
         # Start Server by creating a proxy from the context
         self._proxy = self._proxy_context.create_proxy(
             cls=self.__class__,
             args=args,
             kwargs=kwargs,
-            **self.proxy_kwargs,
+            **p_kwargs,
         )
 
         # Ensure that this object's state is a proxy

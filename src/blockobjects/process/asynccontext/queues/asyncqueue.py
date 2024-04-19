@@ -84,7 +84,6 @@ class AsyncQueue(Queue, QueueInterface):
             InterruptedError: When this method is interrupted by the interrupt event.
         """
         if block:
-            print(f"block, empty: {self.empty()} poll {self.poll()}")
             while self.empty():
                 try:
                     if timeout is None:
@@ -137,7 +136,6 @@ class AsyncQueue(Queue, QueueInterface):
             Empty: When there are no items to get in the queue when not blocking or on timing out.
         """
         if block:
-            print(f"block, empty: {self.empty()} poll {self.poll()}")
             while self.empty():
                 getter = self._get_loop().create_future()
                 self._getters.append(getter)
@@ -245,6 +243,7 @@ class AsyncQueue(Queue, QueueInterface):
         """
         if block:
             while self.full():
+                print("blocking")
                 putter = self._get_loop().create_future()
                 self._putters.append(putter)
                 try:

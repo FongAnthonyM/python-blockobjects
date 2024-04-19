@@ -13,7 +13,8 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import gather, create_task
+from asyncio import gather, create_task, Task
+from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from collections.abc import Iterable, Callable
 from functools import partial
 from typing import ClassVar, Any
@@ -58,19 +59,20 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_get_async: ClassVar[str] = "get_all_async"
     default_put: ClassVar[str] = "put_to_all"
     default_put_async: ClassVar[str] = "put_to_all_async"
-    default_create_link: ClassVar[str] = "create_link_self"
+    default_create_link: ClassVar[str] = "create_link_pass_io"
 
     # Attributes #
     break_sentinel: SentinelObject = SentinelObject("io_break")
     default_io: type[BaseIO] = IOQueue
 
     required: tuple[str] = ()
-    required_cache: BaseIO
     optional_defaults: dict[str, Any] = {}
 
-    callback_method: Callable[[Any], None]
-    callback_method_async: Callable[[Any], None]
+    callback: Callable[[Any], None]
+    callback_async: Callable[[Any], None]
+    max_callback_tasks: int = 1
     callback_tasks: set
+    callback_executor: Task | None = None
 
     wrapped_getter: str | None = None
     wrapped_getter_async: str | None = None
@@ -79,9 +81,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     create_link: MethodMultiplexer
     directly_linked: WeakSet
-    linked_to: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
-    linked_from: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
+    links_to: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
+    links_from: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
     endpoints: dict[tuple[int, int, int, int], tuple["IORouter", str, "IORouter", str]]
+    endpoint_tasks: set
 
     # Magic Methods #
     # Construction/Destruction
@@ -102,8 +105,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
         self.directly_linked = WeakSet()
         self.linked_to = {}
-        self.linked_to = {}
+        self.links_from = {}
         self.endpoints = {}
+
+        self.endpoint_tasks = set()
 
         # Parent Attributes #
         super().__init__()
@@ -111,6 +116,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         # Construction #
         if init:
             self.construct(io_, names, *args, required_cache=required_cache, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}>"
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -127,7 +135,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             if name in state:
                 del state[name]
 
-        for name in ("callback_method", "callback_method_async"):
+        for name in ("callback", "callback_async"):
             if (m := state.get(name, None)) is not None and (_self_ := getattr(m, "_self_",  None)) is not None:
                 # Create strong reference method
                 state[name] = MethodType(m, _self_())
@@ -180,11 +188,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         if io_ is not None:
             self.update_io(io_)
-
-        if required_cache is not None:
-            self.required_cache = required_cache
-        else:
-            self.required_cache = self.default_io()
 
         super().construct(*args, **kwargs)
 
@@ -247,8 +250,18 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
+    def get_deepest_io(self) -> dict:
+        return {k: (v.get_deepest_io() if isinstance(v, IORouter) else v) for k, v in self.data.items()}
+
+    def set_deepest_io(self, io_: dict[str, BaseIO | None]) -> None:
+        for k, v in io_.items():
+            if isinstance(v, dict):
+                self.data[k].set_deepest_io(v)
+            else:
+                self.data[k] = v
+
     # Linking
-    def create_link_self(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
+    def create_link_self(self, *args: Any, **kwargs: Any) -> BaseIO:
         return self
 
     def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
@@ -256,35 +269,56 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     def link_forward(
         self,
-        name: str,
-        io_: "IORouter",
+        source: str,
+        other: "IORouter",
         destination: str | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        key = (id(self), id(name), id(io_), id(destination))
-        self.linked_to[key] = (name, io_, destination)
-        io_.linked_from[key] = (destination, self, name)
+        key = (id(self), id(source), id(other), id(destination))
+        self.links_to[key] = (source, other, destination)
+        other.links_from[key] = (destination, self, source)
 
-        self.data[name] = io_ if destination is None else io_.create_link()
+        self.data[source] = other if destination is None else other.create_link(destination, *args, **kwargs)
+
+    def link_backward(
+        self,
+        other: "IORouter",
+        source: str,
+        destination: str | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        key = (id(other), id(source), id(self), id(destination))
+        other.links_to[key] = (source, self, destination)
+        self.links_from[key] = (destination, other, source)
+
+        other.data[source] = self if destination is None else self.create_link(destination, *args, **kwargs)
 
     def is_link_endpoint(self) -> bool:
         return False
 
-    def get_link_endpoints(self, memo: dict | None = None) -> dict["IORouter", Any]:
+    def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
+        if endpoints is None:
+            endpoints = {}
+
         if memo is None:
-            memo = {}
+            memo = set()
 
-        for io_ in self.directly_linked:
-            io_.get_link_endpoints(memo)
+        if self.directly_linked:
+            for next_io in self.directly_linked:
+                if next_io not in memo:
+                    memo.add(next_io)
+                    next_io.get_link_endpoints(endpoints)
+        else:
+            for k, (n, next_io, d) in self.linked_to.items():
+                if next_io.is_link_endpoint():
+                    endpoints[k] = (self, n, next_io, d)
+                elif self not in memo:
+                    memo.add(self)
+                    next_io.get_link_endpoints(endpoints)
 
-        for k, (n, io_, d) in self.linked_to.items():
-            if io_.is_link_endpoint():
-                memo[k] = (self, n, io_, d)
-            else:
-                io_.get_link_endpoints(memo)
-
-        return memo
+        return endpoints
 
     # Ordering
     def ordered_to_dict(self, ordered: Iterable[Any]) -> dict[str, Any]:
@@ -416,7 +450,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        name, io_, origin = self.linked_from[key]
+        name, io_, origin = self.links_from[key]
         value = io_.get() if origin is None else io_.get_item(origin)
         self.data[name].put(value, *args, **kwargs)
         required = set((self.required or self.order) if required is None else required)
@@ -432,7 +466,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 else:
                     items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
             # Callback
-            self.callback_method(items)
+            self.callback(items)
 
             # Endpoint
             for k, (o, n, in_, d) in self.endpoints.items():
@@ -455,7 +489,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        name, io_, origin = self.linked_from[key]
+        name, io_, origin = self.links_from[key]
         value = await (io_.get_async() if origin is None else io_.get_item_async(origin))
         await self.data[name].put_async(value, *args, **kwargs)
         required = set((self.required or self.order) if required is None else required)
@@ -473,7 +507,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                         **kwargs
                     ))
             # Create Execute Task
-            task = create_task(self.callback_method_async(dict(zip(self.data.keys(), await gather(*items)))))
+            task = create_task(self.callback_async(dict(zip(self.data.keys(), await gather(*items)))))
             self.callback_tasks.add(task)
             task.add_done_callback(self.callback_tasks.discard)  # Have task remove its reference after completion
 
@@ -497,7 +531,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        v = await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))
         return dict(zip(self.data.keys(), await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))))
 
     def get_required(
@@ -599,82 +632,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO objects.
             **kwargs: The keyword arguments of the put of the IO objects.
         """
-        print("putting")
         await gather(*(self.data[k].put_async(v, *args, **kwargs) for k, v in zip(self.order, values)))
-        print(f"{tuple(v.poll() for k, v in self.data.items())}")
-
-    def put_cache_required(
-        self,
-        name: str,
-        value: Any,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> bool:
-        """Put an item into an IO object.
-
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        self.data[name].put(value, *args, **kwargs)
-        required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            if defaults is None:
-                defaults = self.optional_defaults
-
-            items = {}
-            for k, v in self.data.items():
-                if k in required:
-                    items[k] = v.get(*args, **kwargs)
-                else:
-                    items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
-            self.required_cache.put(items)
-            return True
-        else:
-            return False
-
-    async def put_cache_required_async(
-        self,
-        name: str,
-        value: Any,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> bool:
-        """Put an item into an IO object.
-
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        await self.data[name].put_async(value, *args, **kwargs)
-        required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            items = []
-            for k, v in self.data.items():
-                items.append(v.get_async(*args, **kwargs))
-            else:
-                items.append(v.get_async(
-                    *args,
-                    block=False,
-                    default=defaults[k] if k in defaults else default,
-                    **kwargs
-                ))
-            await self.required_cache.put_async(dict(zip(self.data.keys(), await gather(*items))))
-            return True
-        else:
-            return False
 
     def put_required_callback(
         self,
@@ -694,25 +652,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
+        # Put data into IO
         self.data[name].put(value, *args, **kwargs)
+
+        # Schedule Callback
         required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            if defaults is None:
-                defaults = self.optional_defaults
-
-            items = {}
-            for k, v in self.data.items():
-                if k in required:
-                    items[k] = v.get(*args, **kwargs)
-                else:
-                    items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
-            # Callback
-            self.callback_method(items)
-
-            # Endpoint
-            for k, (o, n, in_, d) in self.endpoints.items():
-                in_.get_link_id(k)
+        self.schedule_callback(required, default, defaults)
 
     async def put_required_callback_async(
         self,
@@ -732,34 +677,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
+        # Put data into IO
         await self.data[name].put_async(value, *args, **kwargs)
+
+        # Schedule Callback
         required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            if defaults is None:
-                defaults = self.optional_defaults
-
-            items = []
-            for k, v in self.data.items():
-                if k in required:
-                    items.append(v.get_async(*args, **kwargs))
-                else:
-                    items.append(v.get_async(
-                        *args,
-                        block=False,
-                        default=defaults[k] if k in defaults else default,
-                        **kwargs
-                    ))
-            # Create Execute Task
-            task = create_task(self.callback_method_async(dict(zip(self.data.keys(), await gather(*items)))))
-            self.callback_tasks.add(task)
-            task.add_done_callback(self.callback_tasks.discard)  # Have task remove its reference after completion
-
-            # Create Endpoint Task
-            for k, (o, n, in_, d) in self.endpoints.items():
-                task = create_task(in_.get_link_id_async(k))
-                self.callback_tasks.add(task)
-                task.add_done_callback(self.callback_tasks.discard)
+        await self.schedule_callback_async(required, default, defaults)
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
@@ -832,6 +755,113 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         return {n: m.generate_io_map() for n, m in self.data}
 
     # Callback
-    def set_callback_methods(self, method, method_async) -> None:
-        self.callback_method = method
-        self.callback_method_async = method_async
+    def set_callbacks(self, func, func_async) -> None:
+        self.callback = func
+        self.callback_async = func_async
+
+    def callback_condition(self, required, *args, **kwargs) -> bool:
+        return all(v.poll() for k, v in self.data.items() if k in required)
+
+    async def callback_condition_async(self, required, *args, **kwargs) -> bool:
+        return all(v.poll() for k, v in self.data.items() if k in required)
+
+    def execute_callback(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> None:
+        required = set((self.required or self.order) if required is None else required)
+        while self.callback_condition(required=required):
+            # Callback
+            self.callback(self.get_required(required, default, defaults))
+
+            # Endpoint
+            for k, (o, n, next_input, d) in self.endpoints.items():
+                next_input.get_link_id(k)
+
+    def _execute_next_callback(self, task, required, default, defaults, fut) -> None:
+        self.callback_tasks.discard(task)
+        if self.callback_condition(required=required):
+            new_task = create_task(self.callback_async(self.get_required(required, default, defaults)))
+            self.callback_tasks.add(new_task)
+            # Have the new task remove its reference and run the next callback when it's done
+            task.add_done_callback(
+                partial(self._execute_next_callback, required=required, default=default, defaults=defaults, fut=fut),
+            )
+
+            # Create Endpoint Task
+            for k, (o, n, next_input, d) in self.endpoints.items():
+                task = create_task(next_input.get_link_id_async(k))
+                self.endpoint_tasks.add(task)
+                task.add_done_callback(self.endpoint_tasks.discard)
+        else:
+            fut.set_result(None)
+
+    async def execute_callback_async(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> None:
+        required = set((self.required or self.order) if required is None else required)
+
+        # Create Callback Tasks
+        task_futures = []
+        for i in range(self.max_callback_tasks):
+            if await self.callback_condition_async(required=required):
+                # Create Execute Task
+                task = create_task(self.callback_async(await self.get_required_async(required, default, defaults)))
+                self.callback_tasks.add(task)
+                # Create Future
+                fut = _get_running_loop().create_future()
+                task_futures.append(fut)
+                # Have the new task remove its reference and run the next callback when it's done
+                task.add_done_callback(partial(
+                    self._execute_next_callback,
+                    required=required,
+                    default=default,
+                    defaults=defaults,
+                    fut=fut,
+                ))
+
+                # Create Endpoint Task
+                for k, (o, n, next_input, d) in self.endpoints.items():
+                    task = create_task(next_input.get_link_id_async(k))
+                    self.endpoint_tasks.add(task)
+                    task.add_done_callback(self.endpoint_tasks.discard)
+
+        # Wait for task futures
+        await gather(*task_futures)
+
+    def remove_executor(self, task):
+        self.callback_executor = None
+
+    def schedule_callback(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> None:
+        self.execute_callback(required, default, defaults, *args, **kwargs)
+
+    async def schedule_callback_async(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> None:
+        required = set((self.required or self.order) if required is None else required)
+        if self.callback_executor is None and await self.callback_condition_async(required=required):
+            self.callback_executor = create_task(
+                self.execute_callback_async(required, default, defaults, *args, **kwargs),
+            )
+            self.callback_executor.add_done_callback(self.remove_executor)

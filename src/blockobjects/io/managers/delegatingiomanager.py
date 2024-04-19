@@ -13,11 +13,15 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+import dill
+from pickle import PicklingError
 from typing import ClassVar
 from types import MethodType
+from weakref import ref
 
 # Third-Party Packages #
-from src.blockobjects.process import ProcessDelegate
+from baseobjects import BaseMethod
+from src.blockobjects.process import ProcessDelegate, delegatemethod
 
 # Local Packages #
 from .contextualiomanager import ContextualIOManager
@@ -46,7 +50,7 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
 
     # Class Attributes #
     unexposed: ClassVar[set] = {"default_io"}
-    local_methods: ClassVar[set] = {"set_callback_methods"}
+    local_methods: ClassVar[set] = {"update_server_io", "set_callbacks"}
 
     default_get: ClassVar[str] = "get_required"
     default_get_async: ClassVar[str] = "get_required_async"
@@ -62,13 +66,26 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     def is_link_endpoint(self) -> bool:
         return not self.will_proxy
 
-    def set_callback_methods(self, method, method_async) -> None:
+    def update_server_io(self):
+        self._proxy.set_deepest_io(super().get_deepest_io())
+
+    # Callback
+    def set_callbacks(self, func, func_async) -> None:
+        if isinstance(func, bytes):
+            func = dill.loads(func)
+        if isinstance(func_async, bytes):
+            func_async = dill.loads(func_async)
+
         if self.is_proxy():
-            if (weak := getattr(method, "_self_", None)) is not None:
-                method = MethodType(method.__wrapped__, weak())
-            if (weak := getattr(method_async, "_self_", None)) is not None:
-                method_async = MethodType(method_async.__wrapped__, weak())
-            self._proxy.set_callback_methods(method, method_async)
+            if (weak := getattr(func, "_self_", None)) is not None:
+                func = MethodType(func.__wrapped__, weak())
+            if (weak := getattr(func_async, "_self_", None)) is not None:
+                func_async = MethodType(func_async.__wrapped__, weak())
+
+            try:
+                self._proxy.set_callbacks(func, func_async)
+            except:
+                self._proxy.set_callbacks(dill.dumps(func), dill.dumps(func_async))
         else:
-            self.callback_method = method
-            self.callback_method_async = method_async
+            self.callback = func
+            self.callback_async = func_async

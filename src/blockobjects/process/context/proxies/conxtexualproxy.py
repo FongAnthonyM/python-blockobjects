@@ -28,6 +28,11 @@ from ..interfaces import ProxyInterface
 
 # Definitions #
 # Classes #
+def rebuild_proxy(cls, name, proxy, exposed, context):
+    ProxyType = cls.create_proxy_type(name, exposed)
+    return ProxyType(proxy, context=context)
+
+
 class ContextualProxy(ContextualObjectInterface, ProxyInterface):
 
     # Class Attributes #
@@ -35,6 +40,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
     _exposed_: ClassVar[set] = set()
     _unexposed_: ClassVar[set] = set()
     exposed: ClassVar[set]
+    __exposed__: ClassVar[set]
 
     # Class Methods #
     @classmethod
@@ -78,7 +84,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
             proxy_classes[key] = proxy_class = type(name, (cls,), {})
             for name in exposed:
                 setattr(proxy_class, name, cls._create_proxy_method(name))
-            proxy_class.exposed = set(exposed)
+            proxy_class.__exposed__ = set(exposed)
 
         # Return Proxy Class
         return proxy_class
@@ -137,6 +143,20 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
                 context=context,
                 **_kwargs,
             )
+
+    # Pickling
+    def __reduce__(self) -> tuple:
+        args = (ContextualProxy, self.__class__.__name__, self._proxy, self.__exposed__, self.__context)
+        return rebuild_proxy, args
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        return state
 
     # Instance Methods #
     # Constructors/Destructors

@@ -109,7 +109,7 @@ class TestBaseBlock(PerformanceTest):
         default_required_input = ("first", "third")
         default_optional_input = {"second": 2, "fourth": 4}
         default_output_names = ("out_one", "out_two")
-        resources = {"num_cpu": 0}
+        proxy_kwargs = {"ray": {"num_cpus": 1}}
 
         # Attributes #
         setup_flag: bool = False
@@ -122,12 +122,10 @@ class TestBaseBlock(PerformanceTest):
 
         # Evaluate
         def evaluate(self, first=1, second=0, third=1, fourth=0) -> Any:
-            deadline = time.perf_counter() + 0.1
-            while deadline >= time.perf_counter():
-                pass
-            out_one = first * second
-            out_two = third * fourth
-            return out_one, out_two
+            # deadline = time.perf_counter() + 1
+            # while deadline >= time.perf_counter():
+            #     pass
+            return first, third
 
         # Teardown
         def teardown(self, *args: Any, **kwargs: Any) -> None:
@@ -236,6 +234,61 @@ class TestBaseBlock(PerformanceTest):
     def test_local_start_async(self):
         run(self.local_start_async())
 
+    async def local_start_passive_async_profile(self):
+        block = self.ExampleOne(init_setup=False)
+        block.start_passive()
+
+        pr = cProfile.Profile()
+        pr.enable()
+
+        await block.inputs.put_required_callback_async("first", 2)
+        await block.inputs.put_required_callback_async("third", 3)
+        outputs_1 = await block.outputs.get_all_async()
+
+        pr.disable()
+
+        await block.stop_passive_async()
+
+        s = io.StringIO()
+        sortby = pstats.SortKey.TIME
+        ps = StatsMicro(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+
+    def test_local_start_passive_async_profile(self):
+        run(self.local_start_passive_async_profile())
+
+    async def local_multiple_start_passive_async_profile(self):
+        block1 = self.ExampleOne(init_setup=False)
+        block2 = self.ExampleOne(init_setup=False)
+
+        block1.outputs.link_forward("out_one", block2.inputs, "first")
+        block1.outputs.link_forward("out_two", block2.inputs, "third")
+
+        block1.start_passive()
+        block2.start_passive()
+
+        pr = cProfile.Profile()
+        pr.enable()
+
+        await block1.inputs.put_required_callback_async("first", 2)
+        await block1.inputs.put_required_callback_async("third", 3)
+        outputs_1 = await block2.outputs.get_all_async()
+
+        pr.disable()
+
+        await block1.stop_passive_async()
+        await block2.stop_passive_async()
+
+        s = io.StringIO()
+        sortby = pstats.SortKey.TIME
+        ps = StatsMicro(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+
+    def test_local_multiple_start_passive_async_profile(self):
+        run(self.local_multiple_start_passive_async_profile())
+
     def test_io_evaluate_profile(self):
         block = self.ExampleOne(init_setup=False)
 
@@ -263,7 +316,62 @@ class TestBaseBlock(PerformanceTest):
         outputs_1 = block.outputs.get_all()
 
         pr.disable()
-        block.stop()
+        block.stop_passive()
+        s = io.StringIO()
+        sortby = pstats.SortKey.TIME
+        ps = StatsMicro(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+
+    def test_io_start_passive_profile(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        block = self.ExampleOne(will_proxy=True, init_setup=False)
+        block.start_passive()
+
+        pr = cProfile.Profile()
+        pr.enable()
+
+        block.inputs.put_required_callback("first", 2)
+        block.inputs.put_required_callback("third", 3)
+
+        outputs_1 = block.outputs.get_all()
+
+        pr.disable()
+        block.stop_passive()
+        s = io.StringIO()
+        sortby = pstats.SortKey.TIME
+        ps = StatsMicro(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+
+    def test_io_multiple_start_passive_profile(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        block1 = self.ExampleOne(will_proxy=True, init_setup=False)
+        block2 = self.ExampleOne(will_proxy=True, init_setup=False)
+
+        block1.outputs.link_forward("out_one", block2.inputs, "first")
+        block1.outputs.link_forward("out_two", block2.inputs, "third")
+
+        block1.inputs.start_server()
+        block1.outputs.start_server()
+        block2.inputs.start_server()
+        block2.outputs.start_server()
+
+        block1.outputs.update_server_io()
+
+        block1.start_passive()
+        block2.start_passive()
+
+        pr = cProfile.Profile()
+        pr.enable()
+
+        block1.inputs.put_required_callback("first", 2)
+        block1.inputs.put_required_callback("third", 3)
+        outputs_1 = block2.outputs.get_all()
+
+        pr.disable()
+        block1.stop_passive()
+        block2.stop_passive()
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
         ps = StatsMicro(pr, stream=s).sort_stats(sortby)
@@ -275,4 +383,4 @@ class TestBaseBlock(PerformanceTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_io_start_profile()
+    t.test_local_multiple_start_passive_async_profile()
