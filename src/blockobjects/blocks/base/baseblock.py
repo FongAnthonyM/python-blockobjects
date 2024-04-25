@@ -336,8 +336,10 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     def materialize_io_links(self) -> None:
         if self.inputs.is_proxy():
             self.inputs.update_server_io()
+            self.inputs.start_listeners()
         if self.outputs.is_proxy():
             self.outputs.update_server_io()
+            self.outputs.start_listeners()
 
     def finalize_io_links(self) -> None:
         self.start_inputs()

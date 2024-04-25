@@ -49,7 +49,7 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     """
 
     # Class Attributes #
-    unexposed: ClassVar[set] = {"default_io"}
+    unexposed: ClassVar[set] = {"is_link_endpoint", "default_io"}
     local_methods: ClassVar[set] = {"update_server_io", "set_callbacks"}
 
     default_get: ClassVar[str] = "get_required"
@@ -63,8 +63,8 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     will_proxy: bool = False
 
     # Linking
-    def is_link_endpoint(self) -> bool:
-        return not self.will_proxy
+    def is_remote(self) -> bool:
+        return self.is_alive() or self.will_proxy
 
     def update_server_io(self):
         self._proxy.set_deepest_io(super().get_deepest_io())

@@ -14,3 +14,4 @@ __email__ = __email__
 # Imports #
 # Local Packages #
 from .baseblock import BaseBlock
+from .blockgroup import BlockGroup

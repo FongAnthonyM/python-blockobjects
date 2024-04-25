@@ -17,6 +17,7 @@ from asyncio import gather, create_task, Task
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from collections.abc import Iterable, Callable
 from functools import partial
+from itertools import chain
 from typing import ClassVar, Any
 from types import MethodType
 from weakref import WeakKeyDictionary, WeakSet
@@ -61,6 +62,15 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_put_async: ClassVar[str] = "put_to_all_async"
     default_create_link: ClassVar[str] = "create_link_pass_io"
 
+    # Class Methods #
+    @classmethod
+    def is_endpoint_link(cls, source: "IORouter", destination: "IORouter") -> bool:
+        return source.is_remote() and not destination.is_remote()
+
+    @classmethod
+    def is_listen_link(cls, source: "IORouter", destination: "IORouter") -> bool:
+        return cls.is_endpoint_link(source, destination)
+
     # Attributes #
     break_sentinel: SentinelObject = SentinelObject("io_break")
     default_io: type[BaseIO] = IOQueue
@@ -68,10 +78,18 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     required: tuple[str] = ()
     optional_defaults: dict[str, Any] = {}
 
+    _is_listening: bool = True
+
+    get_tasks: set[Task]
+    put_tasks: set[Task]
+
+    scheduled_listener_links: set[tuple[int, int, int, int]]
+    listeners: set[Task]
+
     callback: Callable[[Any], None]
     callback_async: Callable[[Any], None]
     max_callback_tasks: int = 1
-    callback_tasks: set
+    callback_tasks: set[Task]
     callback_executor: Task | None = None
 
     wrapped_getter: str | None = None
@@ -84,7 +102,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     links_to: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
     links_from: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
     endpoints: dict[tuple[int, int, int, int], tuple["IORouter", str, "IORouter", str]]
-    endpoint_tasks: set
+    endpoint_tasks: set[Task]
 
     # Magic Methods #
     # Construction/Destruction
@@ -100,6 +118,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         # Attributes #
         self.optional_defaults = self.optional_defaults.copy()
 
+        self.get_tasks = set()
+        self.put_tasks = set()
+        self.listeners = set()
         self.callback_tasks = set()
 
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
@@ -131,7 +152,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if (directly_linked := state.get("directly_linked", None)) is not None:
             state["directly_linked"] = set(directly_linked)
 
-        for name in ("callback_tasks", "directly_linked"):
+        for name in ("get_tasks", "put_tasks", "listeners", "callback_tasks", "directly_linked"):
             if name in state:
                 del state[name]
 
@@ -149,8 +170,11 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             state: The attributes to build this object from.
         """
         super().__setstate__(state)
+        self.get_tasks = set()
+        self.put_tasks = set()
+        self.listeners = set()
         self.callback_tasks = set()
-        self.directly_linked = WeakSet()
+        self.directly_linked = WeakSet(self.directly_linked)
 
     # Set Item
     def __setitem__(self, key: str, item: BaseIO) -> None:
@@ -190,6 +214,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             self.update_io(io_)
 
         super().construct(*args, **kwargs)
+
+    # State
+    def is_remote(self) -> bool:
+        return False
 
     # Mapping
     def update_io(self, __m: Any = {}, /, **kwargs) -> None:
@@ -278,6 +306,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         key = (id(self), id(source), id(other), id(destination))
         self.links_to[key] = (source, other, destination)
         other.links_from[key] = (destination, self, source)
+        if self.is_listen_link(self, other):
+            other.scheduled_listener_links.add(key)
 
         self.data[source] = other if destination is None else other.create_link(destination, *args, **kwargs)
 
@@ -292,11 +322,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         key = (id(other), id(source), id(self), id(destination))
         other.links_to[key] = (source, self, destination)
         self.links_from[key] = (destination, other, source)
+        if self.is_listen_link(other, self):
+            self.scheduled_listener_links.add(key)
 
         other.data[source] = self if destination is None else self.create_link(destination, *args, **kwargs)
-
-    def is_link_endpoint(self) -> bool:
-        return False
 
     def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
         if endpoints is None:
@@ -312,7 +341,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                     next_io.get_link_endpoints(endpoints)
         else:
             for k, (n, next_io, d) in self.linked_to.items():
-                if next_io.is_link_endpoint():
+                if self.is_endpoint_link(self, next_io):
                     endpoints[k] = (self, n, next_io, d)
                 elif self not in memo:
                     memo.add(self)
@@ -415,7 +444,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The requested item.
         """
-        return await self.data[name].get_async(name=name, **kwargs)
+        task = create_task(self.data[name].get_async(name=name, **kwargs))
+        self.get_tasks.add(task)
+        task.add_done_callback(self.get_tasks.discard)
+        return await task
 
     def get_ordered(self, *args, **kwargs) -> tuple[Any, ...]:
         """Gets an item from all the IO objects.
@@ -431,7 +463,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        return await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))
+        tasks = set
+        for v in self.data.values():
+            t = create_task(v.get_async(*args, **kwargs))
+            tasks.add(t)
+            t.add_done_callback(self.get_tasks.discard)
+        self.get_tasks.update(tasks)
+        return await gather(*tasks)
 
     def get_link_id(
         self,
@@ -490,8 +528,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The keyword arguments of the put of the IO object.
         """
         name, io_, origin = self.links_from[key]
-        value = await (io_.get_async() if origin is None else io_.get_item_async(origin))
-        await self.data[name].put_async(value, *args, **kwargs)
+        # Get as a task
+        task = create_task(io_.get_async() if origin is None else io_.get_item_async(origin))
+        self.get_tasks.add(task)
+        task.add_done_callback(self.get_tasks.discard)
+        # Put into self
+        await self.data[name].put_async(await task, *args, **kwargs)
         required = set((self.required or self.order) if required is None else required)
 
         if all(v.poll() for k, v in self.data.items() if k in required):
@@ -531,7 +573,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        return dict(zip(self.data.keys(), await gather(*(v.get_async(*args, **kwargs) for v in self.data.values()))))
+        tasks = set
+        for v in self.data.values():
+            t = create_task(v.get_async(*args, **kwargs))
+            tasks.add(t)
+            t.add_done_callback(self.get_tasks.discard)
+        self.get_tasks.update(tasks)
+        return dict(zip(self.data.keys(), await gather(*tasks)))
 
     def get_required(
         self,
@@ -577,18 +625,21 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if defaults is None:
             defaults = self.optional_defaults
 
-        items = []
+        tasks = set()
         for k, v in self.data.items():
             if k in required:
-                items.append(v.get_async(*args, **kwargs))
+                t = create_task(v.put_async(*args, **kwargs))
             else:
-                items.append(v.get_async(
+                t = create_task(v.get_async(
                     *args,
                     block=False,
                     default=defaults[k] if k in defaults else default,
                     **kwargs
                 ))
-        return dict(zip(self.data.keys(), await gather(*items)))
+            tasks.add(t)
+            t.add_done_callback(self.get_tasks.discard)
+        self.get_tasks.update(tasks)
+        return dict(zip(self.data.keys(), await gather(*tasks)))
 
     # Put
     def put_item(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
@@ -745,6 +796,11 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         """
         await gather(*(io_object.put(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
 
+    # Tasks
+    def cancel_tasks(self) -> None:
+        for task in chain(self.get_tasks, self.put_tasks):
+            task.cancel()
+
     # IO Mapping
     def get_links(self) -> dict[str, IOMap] | None:
         """Gets the links of this IO object.
@@ -759,81 +815,42 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.callback = func
         self.callback_async = func_async
 
-    def callback_condition(self, required, *args, **kwargs) -> bool:
+    def callback_condition(self, required: Iterable[str] | None = None, *args, **kwargs) -> bool:
+        required = (self.required or self.order) if required is None else required
         return all(v.poll() for k, v in self.data.items() if k in required)
 
-    async def callback_condition_async(self, required, *args, **kwargs) -> bool:
+    async def callback_condition_async(self, required: Iterable[str] | None = None, *args, **kwargs) -> bool:
+        required = (self.required or self.order) if required is None else required
         return all(v.poll() for k, v in self.data.items() if k in required)
 
-    def execute_callback(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        required = set((self.required or self.order) if required is None else required)
-        while self.callback_condition(required=required):
+    def execute_callback(self, *args, **kwargs) -> None:
+        while self.callback_condition():
             # Callback
-            self.callback(self.get_required(required, default, defaults))
+            self.callback(self.get_required())
 
-            # Endpoint
-            for k, (o, n, next_input, d) in self.endpoints.items():
-                next_input.get_link_id(k)
-
-    def _execute_next_callback(self, task, required, default, defaults, fut) -> None:
+    def _execute_next_callback(self, task, fut) -> None:
         self.callback_tasks.discard(task)
-        if self.callback_condition(required=required):
-            new_task = create_task(self.callback_async(self.get_required(required, default, defaults)))
+        if self.callback_condition():
+            new_task = create_task(self.callback_async(self.get_required()))
             self.callback_tasks.add(new_task)
             # Have the new task remove its reference and run the next callback when it's done
-            task.add_done_callback(
-                partial(self._execute_next_callback, required=required, default=default, defaults=defaults, fut=fut),
-            )
-
-            # Create Endpoint Task
-            for k, (o, n, next_input, d) in self.endpoints.items():
-                task = create_task(next_input.get_link_id_async(k))
-                self.endpoint_tasks.add(task)
-                task.add_done_callback(self.endpoint_tasks.discard)
+            task.add_done_callback(partial(self._execute_next_callback, fut=fut))
         else:
             fut.set_result(None)
 
-    async def execute_callback_async(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        required = set((self.required or self.order) if required is None else required)
-
+    async def execute_callback_async(self, *args, **kwargs) -> None:
         # Create Callback Tasks
         task_futures = []
         for i in range(self.max_callback_tasks):
-            if await self.callback_condition_async(required=required):
+            if await self.callback_condition_async():
                 # Create Execute Task
-                task = create_task(self.callback_async(await self.get_required_async(required, default, defaults)))
+                task = create_task(self.callback_async(await self.get_required_async()))
                 self.callback_tasks.add(task)
                 # Create Future
                 fut = _get_running_loop().create_future()
                 task_futures.append(fut)
                 # Have the new task remove its reference and run the next callback when it's done
-                task.add_done_callback(partial(
-                    self._execute_next_callback,
-                    required=required,
-                    default=default,
-                    defaults=defaults,
-                    fut=fut,
-                ))
-
-                # Create Endpoint Task
-                for k, (o, n, next_input, d) in self.endpoints.items():
-                    task = create_task(next_input.get_link_id_async(k))
-                    self.endpoint_tasks.add(task)
-                    task.add_done_callback(self.endpoint_tasks.discard)
+                task.add_done_callback(partial(self._execute_next_callback, fut=fut))
 
         # Wait for task futures
         await gather(*task_futures)
@@ -841,27 +858,43 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     def remove_executor(self, task):
         self.callback_executor = None
 
-    def schedule_callback(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        self.execute_callback(required, default, defaults, *args, **kwargs)
+    def schedule_callback(self, *args, **kwargs) -> None:
+        self.execute_callback(*args, **kwargs)
 
-    async def schedule_callback_async(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        required = set((self.required or self.order) if required is None else required)
-        if self.callback_executor is None and await self.callback_condition_async(required=required):
-            self.callback_executor = create_task(
-                self.execute_callback_async(required, default, defaults, *args, **kwargs),
-            )
+    async def schedule_callback_async(self, *args, **kwargs) -> None:
+        if self.callback_executor is None and await self.callback_condition_async():
+            self.callback_executor = create_task(self.execute_callback_async(*args, **kwargs))
             self.callback_executor.add_done_callback(self.remove_executor)
+
+    # Listening
+    async def listen_link_async(self, key: tuple[int, int, int, int], *args, **kwargs) -> None:
+        """Put an item into an IO object.
+
+        Args:
+            name: The key name to the IO object to put the item into.
+            value: The value to put in the IO object.
+            *args: The arguments of the put of the IO object.
+            **kwargs: The keyword arguments of the put of the IO object.
+        """
+        name, io_, origin = self.links_from[key]
+        get_method = io_.get_async if origin is None else partial(io_.get_item_async, origin)
+
+        while self._is_listening:
+            await self.data[name].put_async(await get_method())
+            await self.schedule_callback_async()
+
+    def create_async_link_listener(self, key: tuple[int, int, int, int], *args, **kwargs) -> None:
+        task = create_task(self.listen_link_async(key, *args, **kwargs))
+        self.listeners.add(task)
+        task.add_done_callback(self.listeners.discard)
+
+    def start_listeners(self) -> None:
+        if not self._is_listening:
+            self._is_listening = True
+        for key in self.scheduled_listener_links:
+            self.create_async_link_listener(key)
+
+    def stop_listeners(self, msg: Any | None = None) -> None:
+        self._is_listening = False
+        for listener in self.listeners:
+            listener.cancel(msg)
