@@ -145,6 +145,10 @@ class BlockGroup(BaseBlock):
             **kwargs: Keyword arguments for inheritance.
         """
         # New Assignment #
+        self.inputs.wrapped_putter = "put_item"
+        self.inputs.wrapped_getter_async = "put_item_async"
+        self.outputs.create_link.select("create_link_none")
+
         if blocks is not None:
             self.blocks.update(blocks)
 
@@ -170,6 +174,16 @@ class BlockGroup(BaseBlock):
             override: Determines if the inner blocks will be overridden.
             **kwargs: The keyword arguments for creating the inner blocks.
         """
+
+    def start_blocks_passive(self) -> None:
+        for block in self.blocks.values():
+            if block.inputs.will_proxy:
+                block.inputs.start_server()
+            if block.outputs.will_proxy:
+                block.outputs.start_server()
+
+        for block in self.blocks.values():
+            block.start_passive()
 
     # IO
     def start_inputs(self) -> None:

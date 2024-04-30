@@ -60,7 +60,6 @@ class ContextualIOManager(BaseIOManager):
         io_: dict[str, BaseIO | None] | None = None,
         names: Iterable[str] | None = None,
         *args: Any,
-        required_cache: BaseIO | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -72,7 +71,7 @@ class ContextualIOManager(BaseIOManager):
 
         # Construction #
         if init:
-            self.construct(io_, names, *args, required_cache=required_cache, **kwargs)
+            self.construct(io_, names, *args, **kwargs)
 
     # Context
     def set_all_contexts(self, context: BaseProcessingContext | None) -> None:

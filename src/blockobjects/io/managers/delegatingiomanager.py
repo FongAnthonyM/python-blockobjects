@@ -49,7 +49,11 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     """
 
     # Class Attributes #
-    unexposed: ClassVar[set] = {"is_link_endpoint", "default_io"}
+    unexposed: ClassVar[set] = {
+        "is_endpoint_link",
+        "is_listen_link",
+        "default_io",
+    }
     local_methods: ClassVar[set] = {"update_server_io", "set_callbacks"}
 
     default_get: ClassVar[str] = "get_required"

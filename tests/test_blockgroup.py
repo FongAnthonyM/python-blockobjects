@@ -36,7 +36,7 @@ from src.rayblocks import RayContext
 
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("ray")
+DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
 
 # Classes #
@@ -102,12 +102,11 @@ class GroupOne(BlockGroup):
         block_2 = self.blocks["block_2"]
 
         self.inputs.link_forward("one", block_1.inputs, "first")
-        self.inputs.link_forward("two", block_1.inputs, "second")
+        self.inputs.link_forward("two", block_1.inputs, "third")
         block_1.outputs.link_forward("out_one", block_2.inputs, "first")
         block_1.outputs.link_forward("out_two", block_2.inputs, "third")
         block_2.outputs.link_forward("out_one", self.outputs, "out_one")
         block_2.outputs.link_forward("out_two", self.outputs, "out_two")
-
 
 
 class TestBaseBlock(ClassTest):
@@ -200,19 +199,20 @@ class TestBaseBlock(ClassTest):
         run(self.local_start_async())
 
     async def local_start_passive_async(self):
-        block = self.ExampleOne(init_setup=False)
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        block = GroupOne(init_setup=False)
         block.start_passive()
+        block.outputs.start_listeners()
+        block.start_blocks_passive()
 
-        await block.inputs.put_required_callback_async("first", 2)
-        await block.inputs.put_required_callback_async("third", 3)
+        await block.inputs.put_item_async("one", 2)
+        await block.inputs.put_item_async("two", 3)
         outputs_1 = await block.outputs.get_all_async()
 
         await block.stop_passive_async()
 
-        assert block.setup_flag
-        assert block.teardown_flag
-        assert outputs_1["out_one"] == 4
-        assert outputs_1["out_two"] == 12
+        assert outputs_1["out_one"] == 8
+        assert outputs_1["out_two"] == 48
 
     def test_local_start_passive_async(self):
         run(self.local_start_passive_async())
@@ -262,7 +262,6 @@ class TestBaseBlock(ClassTest):
     def test_start_passive_proxy(self):
         DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         group = GroupOne(init_setup=False)
-        group.setup()
         group.start_passive()
 
         group.inputs.put_required_callback("one", 2)
@@ -272,8 +271,8 @@ class TestBaseBlock(ClassTest):
 
         group.stop_passive()
 
-        assert outputs_1["out_one"] == 4
-        assert outputs_1["out_two"] == 12
+        assert outputs_1["out_one"] == 8
+        assert outputs_1["out_two"] == 48
 
     def test_multiple_start_passive_proxy(self):
         DEFAULT_PROCESS_CONTEXT.select_context("ray")
@@ -311,4 +310,4 @@ class TestBaseBlock(ClassTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_local_multiple_start_passive_async()
+    t.test_local_start_passive_async()

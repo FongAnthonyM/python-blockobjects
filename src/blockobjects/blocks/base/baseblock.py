@@ -14,7 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
-from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
+from asyncio.events import AbstractEventLoop, _get_running_loop
 from abc import abstractmethod
 from collections.abc import Iterable
 from collections import deque
@@ -102,11 +102,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     # Attributes #
     # Backend
     untransmittable = {"loop_event", "inputs", "outputs", "futures"}
-    async_event_loop: AbstractEventLoop = get_event_loop()
+    async_event_loop: AbstractEventLoop | None = _get_running_loop()
 
     # State
     _loop_event: bool = False
-    will_proxy: bool = False
+    _will_proxy: bool = False
     _is_executing: bool = False
     _executing_waiters: deque[Future]
 
@@ -137,6 +137,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     execute_output_async: MethodMultiplexer
 
     futures: list[Future]
+
+    @property
+    def will_proxy(self) -> bool:
+        return self._will_proxy
+
+    @will_proxy.setter
+    def will_proxy(self, value: bool) -> None:
+        self._will_proxy = value
+        self.inputs.will_proxy = value
+        self.outputs.will_proxy = value
 
     # Magic Methods #
     # Construction/Destruction
@@ -197,7 +207,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             A dictionary of this object's attributes.
         """
         state = super().__getstate__()
-        for name in {"will_proxy", "async_event_loop", "linked"}:
+        for name in {"_will_proxy", "async_event_loop", "linked"}:
             if name in state:
                 del state[name]
         return state
@@ -653,7 +663,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if not self.is_alive():
                 self._start_server()
             self._proxy.run(None, s_kwargs, e_kwargs, t_kwargs)
-        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+        elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._run(s_kwargs, e_kwargs, t_kwargs), loop)
         else:
             self._run_async_loop(s_kwargs, e_kwargs, t_kwargs)
@@ -757,7 +767,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if not self.is_alive():
                 self._start_server()
             self._proxy.start(None, s_kwargs, e_kwargs, t_kwargs)
-        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+        elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start(s_kwargs, e_kwargs, t_kwargs), loop)
         else:
             self._start_async_loop(s_kwargs, e_kwargs, t_kwargs)
@@ -860,7 +870,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self._start_server()
                 self.set_input_callback_proxy()
             self._proxy.start_passive(None, s_kwargs)
-        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+        elif (loop := self.async_event_loop) is not None:
             self.set_input_callback()
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
@@ -929,7 +939,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if update:
                 self.join_execution()
             self._stop_server(update)
-        elif loop := self.async_event_loop if self.async_event_loop.is_running() else _get_running_loop():
+        elif (loop := self.async_event_loop) is not None:
             self.set_input_callback()
             run_coroutine_threadsafe(self._stop_passive(t_kwargs), loop)
         else:

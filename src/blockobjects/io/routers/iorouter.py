@@ -26,6 +26,7 @@ from weakref import WeakKeyDictionary, WeakSet
 from baseobjects import SentinelObject, search_sentinel
 from baseobjects.collections import OrderableDict
 from baseobjects.functions import MethodMultiplexer
+import dill
 
 # Local Packages #
 from ..base import IOMap, BaseIO, BaseIOMultiplexer, IODelegator, IOWrapper
@@ -73,36 +74,39 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # Attributes #
     break_sentinel: SentinelObject = SentinelObject("io_break")
-    default_io: type[BaseIO] = IOQueue
 
+    # IO
+    default_io: type[BaseIO] = IOQueue
     required: tuple[str] = ()
     optional_defaults: dict[str, Any] = {}
 
-    _is_listening: bool = True
-
-    get_tasks: set[Task]
-    put_tasks: set[Task]
-
-    scheduled_listener_links: set[tuple[int, int, int, int]]
-    listeners: set[Task]
-
-    callback: Callable[[Any], None]
-    callback_async: Callable[[Any], None]
-    max_callback_tasks: int = 1
-    callback_tasks: set[Task]
-    callback_executor: Task | None = None
-
-    wrapped_getter: str | None = None
-    wrapped_getter_async: str | None = None
-    wrapped_putter: str | None = "put_required_callback"
-    wrapped_putter_async: str | None = "put_required_callback_async"
-
+    # Links
     create_link: MethodMultiplexer
     directly_linked: WeakSet
     links_to: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
     links_from: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
     endpoints: dict[tuple[int, int, int, int], tuple["IORouter", str, "IORouter", str]]
     endpoint_tasks: set[Task]
+
+    # Get/Put Tasks
+    wrapped_getter: str | None = None
+    wrapped_getter_async: str | None = None
+    wrapped_putter: str | None = "put_required_callback"
+    wrapped_putter_async: str | None = "put_required_callback_async"
+    get_tasks: set[Task]
+    put_tasks: set[Task]
+
+    # Listening
+    _is_listening: bool = True
+    scheduled_listener_links: set[tuple[int, int, int, int]]
+    listeners: set[Task]
+
+    # Callback
+    callback: Callable[[Any], None]
+    callback_async: Callable[[Any], None]
+    callback_executor: Task | None = None
+    max_callback_tasks: int = 1
+    callback_tasks: set[Task]
 
     # Magic Methods #
     # Construction/Destruction
@@ -111,32 +115,33 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         io_: dict[str, BaseIO | None] | None = None,
         names: Iterable[str] | None = None,
         *args: Any,
-        required_cache: BaseIO | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
         # Attributes #
         self.optional_defaults = self.optional_defaults.copy()
 
-        self.get_tasks = set()
-        self.put_tasks = set()
-        self.listeners = set()
-        self.callback_tasks = set()
-
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
         self.directly_linked = WeakSet()
-        self.linked_to = {}
+        self.links_to = {}
         self.links_from = {}
         self.endpoints = {}
-
         self.endpoint_tasks = set()
+
+        self.get_tasks = set()
+        self.put_tasks = set()
+
+        self.scheduled_listener_links = set()
+        self.listeners = set()
+
+        self.callback_tasks = set()
 
         # Parent Attributes #
         super().__init__()
 
         # Construction #
         if init:
-            self.construct(io_, names, *args, required_cache=required_cache, **kwargs)
+            self.construct(io_, names, *args, **kwargs)
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
@@ -158,8 +163,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         for name in ("callback", "callback_async"):
             if (m := state.get(name, None)) is not None and (_self_ := getattr(m, "_self_",  None)) is not None:
-                # Create strong reference method
-                state[name] = MethodType(m, _self_())
+                del state[name]
 
         return state
 
@@ -170,11 +174,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             state: The attributes to build this object from.
         """
         super().__setstate__(state)
-        self.get_tasks = set()
-        self.put_tasks = set()
-        self.listeners = set()
-        self.callback_tasks = set()
-        self.directly_linked = WeakSet(self.directly_linked)
+        self.directly_linked = WeakSet(state.get("directly_linked", None))
 
     # Set Item
     def __setitem__(self, key: str, item: BaseIO) -> None:
@@ -196,7 +196,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         io_: dict[str, BaseIO | None] | None = None,
         names: Iterable[str] | None = None,
         *args: Any,
-        required_cache: BaseIO | None = None,
         **kwargs: Any,
     ) -> None:
         """Constructs this object.
@@ -289,6 +288,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 self.data[k] = v
 
     # Linking
+    def create_link_none(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
     def create_link_self(self, *args: Any, **kwargs: Any) -> BaseIO:
         return self
 
@@ -309,7 +311,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if self.is_listen_link(self, other):
             other.scheduled_listener_links.add(key)
 
-        self.data[source] = other if destination is None else other.create_link(destination, *args, **kwargs)
+        if destination is None:
+            self.data[source] = other
+        elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
+            self.data[source] = d_io
 
     def link_backward(
         self,
@@ -325,7 +330,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if self.is_listen_link(other, self):
             self.scheduled_listener_links.add(key)
 
-        other.data[source] = self if destination is None else self.create_link(destination, *args, **kwargs)
+        if destination is None:
+            other.data[source] = self
+        elif (d_io := self.create_link(destination, *args, **kwargs)) is not None:
+            other.data[source] = d_io
 
     def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
         if endpoints is None:
@@ -340,7 +348,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                     memo.add(next_io)
                     next_io.get_link_endpoints(endpoints)
         else:
-            for k, (n, next_io, d) in self.linked_to.items():
+            for k, (n, next_io, d) in self.links_to.items():
                 if self.is_endpoint_link(self, next_io):
                     endpoints[k] = (self, n, next_io, d)
                 elif self not in memo:
@@ -573,10 +581,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        tasks = set
+        tasks = list()
         for v in self.data.values():
             t = create_task(v.get_async(*args, **kwargs))
-            tasks.add(t)
+            tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
         return dict(zip(self.data.keys(), await gather(*tasks)))
@@ -625,10 +633,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if defaults is None:
             defaults = self.optional_defaults
 
-        tasks = set()
+        tasks = list()
         for k, v in self.data.items():
             if k in required:
-                t = create_task(v.put_async(*args, **kwargs))
+                t = create_task(v.get_async(*args, **kwargs))
             else:
                 t = create_task(v.get_async(
                     *args,
@@ -636,7 +644,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                     default=defaults[k] if k in defaults else default,
                     **kwargs
                 ))
-            tasks.add(t)
+            tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
         return dict(zip(self.data.keys(), await gather(*tasks)))
@@ -662,7 +670,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        self.data[name].put_async(value, *args, **kwargs)
+        await self.data[name].put_async(value, *args, **kwargs)
 
     def put_ordered(self, values: Iterable[Any], *args: Any, **kwargs: Any) -> None:
         """Puts given values into their IO objects based on this object's order.
@@ -844,7 +852,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         for i in range(self.max_callback_tasks):
             if await self.callback_condition_async():
                 # Create Execute Task
-                task = create_task(self.callback_async(await self.get_required_async()))
+                task = create_task(self.callback_async(self.get_required()))
                 self.callback_tasks.add(task)
                 # Create Future
                 fut = _get_running_loop().create_future()

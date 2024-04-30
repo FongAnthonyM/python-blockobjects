@@ -222,7 +222,7 @@ class TestBaseBlock(ClassTest):
         assert block.teardown_flag
 
     def test_start_passive_proxy(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start_passive()
 
@@ -247,9 +247,13 @@ class TestBaseBlock(ClassTest):
         block1.outputs.link_forward("out_two", block2.inputs, "third")
 
         block1.inputs.start_server()
+        block1.inputs.start_listeners()
         block1.outputs.start_server()
+        block1.outputs.start_listeners()
         block2.inputs.start_server()
+        block2.inputs.start_listeners()
         block2.outputs.start_server()
+        block2.outputs.start_listeners()
 
         block1.outputs.update_server_io()
 
