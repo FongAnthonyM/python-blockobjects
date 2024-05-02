@@ -113,16 +113,6 @@ class ProcessDelegate(ContextualObjectInterface):
         if init:
             self.construct(start_server=start_server, proxy_context=proxy_context, _state=_state)
 
-    # Pickling
-    def __getstate__(self) -> dict[str, Any]:
-        """Creates a dictionary of attributes which can be used to rebuild this object.
-
-        Returns:
-            A dictionary of this object's attributes.
-        """
-        state = super().__getstate__()
-        return state
-
     # Instance Methods #
     # Constructors/Destructors
     def construct(
@@ -305,6 +295,7 @@ class ProcessDelegate(ContextualObjectInterface):
             self.update()
 
         # Remove the server (server should stop when de-referenced)
+        self._proxy._kill_server()
         self._proxy = None
 
         # Set this object's state is not a proxy

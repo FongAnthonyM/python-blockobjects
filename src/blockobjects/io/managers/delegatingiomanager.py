@@ -15,7 +15,7 @@ __email__ = __email__
 # Standard Libraries #
 import dill
 from pickle import PicklingError
-from typing import ClassVar
+from typing import ClassVar, Any
 from types import MethodType
 from weakref import ref
 
@@ -49,6 +49,7 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     """
 
     # Class Attributes #
+    _memory_deletables: tuple = ("links_to", "links_from", "endpoints")
     unexposed: ClassVar[set] = {
         "is_endpoint_link",
         "is_listen_link",
@@ -65,6 +66,22 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
     # Attributes #
     # State
     will_proxy: bool = False
+
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        # Save memory by deleting large unused attributes.
+        if self.is_alive():
+            for name in self._memory_deletables:
+                if name in state:
+                    del state[name]
+
+        return state
 
     # Linking
     def is_remote(self) -> bool:

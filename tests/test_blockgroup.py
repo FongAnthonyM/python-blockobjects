@@ -79,7 +79,14 @@ class GroupOne(BlockGroup):
     default_output_names = ("out_one", "out_two")
 
     # Blocks
-    def create_blocks(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+    def create_blocks(
+        self,
+        first_proxy: bool = False,
+        second_proxy: bool = False,
+        *args: Any,
+        override: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """Creates the inner blocks.
 
         Args:
@@ -87,8 +94,11 @@ class GroupOne(BlockGroup):
             override: Determines if the inner blocks will be overridden.
             **kwargs: The keyword arguments for creating the inner blocks.
         """
-        self.blocks["block_1"] = ExampleOne(will_proxy=True)
-        self.blocks["block_2"] = ExampleOne(will_proxy=True)
+        if override or "block_1" not in self.blocks:
+            self.blocks["block_1"] = ExampleOne(will_proxy=first_proxy)
+
+        if override or "block_2" not in self.blocks:
+            self.blocks["block_2"] = ExampleOne(will_proxy=second_proxy)
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
@@ -110,100 +120,11 @@ class GroupOne(BlockGroup):
 
 
 class TestBaseBlock(ClassTest):
-    def create_local_block(self):
-        return self.ExampleOne()
-
-    def create_proxy_block(self):
-        proxy = self.ExampleOne()
-        return proxy
-
-    @pytest.fixture(params=[create_local_block, create_proxy_block])
-    def test_block(self, request):
-        return request.param(self)
-
-    def test_create_block_local(self):
-        block = self.ExampleOne(init_setup=True)
-        assert block is not None
-        assert block.setup_flag
-
-    def test_evaluate_local(self):
-        block = self.ExampleOne()
-        out_one, out_two = block.evaluate(2, 3, 10)
-        assert out_one == 6
-        assert out_two == 0
-
-    def test_execute_local(self):
-        block = self.ExampleOne()
-        block.inputs.put_all(first=2, third=3)
-        block.execute()
-        outputs = block.outputs.get_all()
-        assert outputs["out_one"] == 4
-        assert outputs["out_two"] == 12
-
-    # def test_execute_proxy(self):
-    #     block = self.ExampleOne()
-    #     block.start_server()
-    #     block.inputs.put_all(first=2, third=3)
-    #     block.execute()
-    #     outputs = block.outputs.get_all()
-    #     block.stop_server()
-    #     assert outputs["out_one"] == 4
-    #     assert outputs["out_two"] == 12
-
-    def test_run_local(self):
-        block = self.ExampleOne(init_setup=False)
-        block.inputs.put_all(first=2, third=3)
-        block.run()
-        outputs = block.outputs.get_all()
-        assert block.setup_flag
-        assert block.teardown_flag
-        assert outputs["out_one"] == 4
-        assert outputs["out_two"] == 12
-
-    def test_run_proxy(self):
-        block = self.ExampleOne(will_proxy=True, init_setup=False)
-        block.inputs.put_all(first=2, third=3)
-        block.run()
-        outputs = block.outputs.get_all()
-
-        assert outputs["out_one"] == 4
-        assert outputs["out_two"] == 12
-
-        block.update()
-
-        assert block.setup_flag
-        assert block.teardown_flag
-
-        block.stop()
-
-    async def local_start_async(self):
-        block = self.ExampleOne(init_setup=False)
-        block.start()
-
-        await sleep(1)
-        block.inputs.put_all(first=2, third=3)
-        block.inputs.put_all(first=3, third=2)
-        await sleep(0.1)
-        outputs_1 = block.outputs.get_all()
-        outputs_2 = block.outputs.get_all()
-        block.stop()
-        await sleep(0.1)
-        assert block.setup_flag
-        assert block.teardown_flag
-        assert outputs_1["out_one"] == 4
-        assert outputs_1["out_two"] == 12
-        assert outputs_2["out_one"] == 6
-        assert outputs_2["out_two"] == 8
-
-    def test_local_start_async(self):
-        run(self.local_start_async())
 
     async def local_start_passive_async(self):
         DEFAULT_PROCESS_CONTEXT.select_context("ray")
-        block = GroupOne(init_setup=False)
-        block.start_passive()
-        block.outputs.start_listeners()
-        block.start_blocks_passive()
+        block = GroupOne(init_setup=False, create_kwargs={"first_proxy": False, "second_proxy": False})
+        await block.start_passive_async()
 
         await block.inputs.put_item_async("one", 2)
         await block.inputs.put_item_async("two", 3)
@@ -217,6 +138,23 @@ class TestBaseBlock(ClassTest):
     def test_local_start_passive_async(self):
         run(self.local_start_passive_async())
 
+    async def partial_local_start_passive_async(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        block = GroupOne(init_setup=False, create_kwargs={"first_proxy": True, "second_proxy": False})
+        await block.start_passive_async()
+
+        await block.inputs.put_item_async("one", 2)
+        await block.inputs.put_item_async("two", 3)
+        outputs_1 = await block.outputs.get_all_async()
+
+        await block.stop_passive_async()
+
+        assert outputs_1["out_one"] == 8
+        assert outputs_1["out_two"] == 48
+
+    def test_partial_local_start_passive_async(self):
+        run(self.partial_local_start_passive_async())
+
     async def local_multiple_start_passive_async(self):
         block1 = self.ExampleOne(init_setup=False)
         block2 = self.ExampleOne(init_setup=False)
@@ -227,8 +165,8 @@ class TestBaseBlock(ClassTest):
         block1.start_passive()
         block2.start_passive()
 
-        await block1.inputs.put_required_callback_async("first", 2)
-        await block1.inputs.put_required_callback_async("third", 3)
+        await block1.inputs.put_callback_async("first", 2)
+        await block1.inputs.put_callback_async("third", 3)
         outputs_1 = await block2.outputs.get_all_async()
 
         await block1.stop_passive_async()
@@ -264,8 +202,8 @@ class TestBaseBlock(ClassTest):
         group = GroupOne(init_setup=False)
         group.start_passive()
 
-        group.inputs.put_required_callback("one", 2)
-        group.inputs.put_required_callback("two", 3)
+        group.inputs.put_callback("one", 2)
+        group.inputs.put_callback("two", 3)
 
         outputs_1 = group.outputs.get_all()
 
@@ -292,8 +230,8 @@ class TestBaseBlock(ClassTest):
         block1.start_passive()
         block2.start_passive()
 
-        block1.inputs.put_required_callback("first", 2)
-        block1.inputs.put_required_callback("third", 3)
+        block1.inputs.put_callback("first", 2)
+        block1.inputs.put_callback("third", 3)
 
         outputs_1 = block2.outputs.get_all()
 

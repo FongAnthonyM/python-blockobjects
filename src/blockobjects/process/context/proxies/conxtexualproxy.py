@@ -211,4 +211,11 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
 
     # State
     def _is_alive(self) -> bool:
+        """Returns True if the proxy server is alive, False otherwise."""
         return self._proxy is not None and self._proxy._is_alive()
+
+    # Server
+    def _kill_server(self) -> None:
+        """Kills the server which the proxy is running on."""
+        if self._proxy is not None and self._proxy._is_alive():
+            self._proxy._kill_server()

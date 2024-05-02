@@ -102,7 +102,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     # Attributes #
     # Backend
     untransmittable = {"loop_event", "inputs", "outputs", "futures"}
-    async_event_loop: AbstractEventLoop | None = _get_running_loop()
+    _async_event_loop: AbstractEventLoop | None = None
 
     # State
     _loop_event: bool = False
@@ -137,6 +137,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     execute_output_async: MethodMultiplexer
 
     futures: list[Future]
+
+    @property
+    def async_event_loop(self) -> AbstractEventLoop:
+        if self._async_event_loop is None:
+            self.async_event_loop = _get_running_loop()
+        return self._async_event_loop
+
+    @async_event_loop.setter
+    def async_event_loop(self, value: AbstractEventLoop) -> None:
+        self._async_event_loop = value
 
     @property
     def will_proxy(self) -> bool:
@@ -343,7 +353,13 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
             self.outputs.start_server()
 
-    def materialize_io_links(self) -> None:
+    def start_io(self) -> None:
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    def materialize_io(self) -> None:
         if self.inputs.is_proxy():
             self.inputs.update_server_io()
             self.inputs.start_listeners()
@@ -351,10 +367,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             self.outputs.update_server_io()
             self.outputs.start_listeners()
 
-    def finalize_io_links(self) -> None:
-        self.start_inputs()
-        self.start_outputs()
-        self.materialize_io_links()
+    def finalize_io(self) -> None:
+        self.start_io()
+        self.materialize_io()
 
     def set_io_execution(self) -> None:
         match len(self.inputs):
@@ -836,6 +851,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             s_kwargs: The keyword arguments for block setup.
         """
         self._set_executing()
+
         # Optionally Setup
         if self.sets_up:
             await self.setup_async(**(s_kwargs or {}))
@@ -852,6 +868,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
+        finalize: bool = True,
     ) -> None:
         """Starts the continuous execution of the block, delegating to another process if selected.
 
@@ -866,21 +883,25 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Run as Proxy
         if as_proxy or (as_proxy is None and self.will_proxy):
             if not self.is_alive():
-                self.finalize_io_links()
+                if finalize:
+                    self.finalize_io()
                 self._start_server()
                 self.set_input_callback_proxy()
             self._proxy.start_passive(None, s_kwargs)
         elif (loop := self.async_event_loop) is not None:
             self.set_input_callback()
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
+            self.outputs.start_listeners()
         else:
             self.set_input_callback()
             self._start_passive_async_loop(s_kwargs)
+            self.outputs.start_listeners()
 
     async def start_passive_async(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
+        finalize: bool = True,
     ) -> None:
         """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
 
@@ -895,14 +916,29 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Use Correct Context
         if as_proxy or (as_proxy is None and self.will_proxy):
             if not self.is_alive():
-                self.finalize_io_links()
+                if finalize:
+                    self.finalize_io()
                 self._start_server()
                 self.set_input_callback_proxy()
             await self._proxy.start_passive_async(None, s_kwargs)
         else:
+            self.set_input_callback()
+            await self.outputs.start_listeners_async()
             await self._start_passive(s_kwargs)
 
     # Stop Block Passive Execution
+    def _stop_server(self, update: bool = True) -> None:
+        """Stops the remote server relative to this object.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        self.inputs.cancel_tasks()
+        self.inputs.stop_server(update)
+        self.outputs.cancel_tasks()
+        self.outputs.stop_server(update)
+        super()._stop_server(update)
+
     async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
@@ -996,4 +1032,3 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 await wait_for(fut, timeout)
             finally:
                 self._executing_waiters.remove(fut)
-

@@ -15,7 +15,8 @@ __email__ = __email__
 # Standard Libraries #
 from collections.abc import Iterable, Generator
 from multiprocessing import util, process
-from multiprocessing.managers import BaseProxy, RebuildProxy, dispatch, convert_to_error, listener_client, get_spawning_popen
+from multiprocessing.managers import (BaseProxy, RebuildProxy, dispatch,
+                                      convert_to_error, listener_client, get_spawning_popen, State)
 import threading
 from typing import Any, ClassVar
 
@@ -130,8 +131,10 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
     # State
     def _is_alive(self) -> bool:
+        """Returns True if the proxy server is alive, False otherwise."""
         return True
 
+    # Server
     def _parse_result(self, result):
         kind, item = result
         match kind:
@@ -156,6 +159,34 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
         conn.send((self._id, methodname, args, kwds))
         return self._parse_result(conn.recv())
+
+    def _delref(self, auto_shutdown: bool = True) -> None:
+        # check whether manager is still alive
+        state = self._manager._state
+        if state is None or state.value == State.STARTED:
+            # tell manager this process no longer cares about referent
+            try:
+                util.debug('DELREF %r', self._token.id)
+                conn = self._Client(self._token.address, authkey=self._authkey)
+                dispatch(conn, None, 'delref', (self._token.id,))
+            except Exception as e:
+                util.debug('... delref failed %s', e)
+            else:
+                if auto_shutdown and self._manager._number_of_objects() == 0:
+                    self._manager.shutdown()
+        else:
+            util.debug('DELREF %r -- manager already shutdown', self._token.id)
+
+        # check whether we can close this thread's connection because
+        # the process owns no more references to objects for this manager
+        if not self._idset and hasattr(self._tls, 'connection'):
+            util.debug('thread %r has no more proxies so closing conn', threading.current_thread().name)
+            self._tls.connection.close()
+            del self._tls.connection
+
+    def _kill_server(self) -> None:
+        """Kills the server which the proxy is running on."""
+        self._delref()
 
 
 # Functions #

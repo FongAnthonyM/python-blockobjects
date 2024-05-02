@@ -165,8 +165,8 @@ class TestBaseBlock(ClassTest):
         block = self.ExampleOne(init_setup=False)
         block.start_passive()
 
-        await block.inputs.put_required_callback_async("first", 2)
-        await block.inputs.put_required_callback_async("third", 3)
+        await block.inputs.put_callback_async("first", 2)
+        await block.inputs.put_callback_async("third", 3)
         outputs_1 = await block.outputs.get_all_async()
 
         await block.stop_passive_async()
@@ -189,8 +189,8 @@ class TestBaseBlock(ClassTest):
         block1.start_passive()
         block2.start_passive()
 
-        await block1.inputs.put_required_callback_async("first", 2)
-        await block1.inputs.put_required_callback_async("third", 3)
+        await block1.inputs.put_callback_async("first", 2)
+        await block1.inputs.put_callback_async("third", 3)
         outputs_1 = await block2.outputs.get_all_async()
 
         await block1.stop_passive_async()
@@ -226,8 +226,8 @@ class TestBaseBlock(ClassTest):
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start_passive()
 
-        block.inputs.put_required_callback("first", 2)
-        block.inputs.put_required_callback("third", 3)
+        block.inputs.put_callback("first", 2)
+        block.inputs.put_callback("third", 3)
 
         outputs_1 = block.outputs.get_all()
 
@@ -260,8 +260,8 @@ class TestBaseBlock(ClassTest):
         block1.start_passive()
         block2.start_passive()
 
-        block1.inputs.put_required_callback("first", 2)
-        block1.inputs.put_required_callback("third", 3)
+        block1.inputs.put_callback("first", 2)
+        block1.inputs.put_callback("third", 3)
 
         outputs_1 = block2.outputs.get_all()
 
@@ -278,4 +278,4 @@ class TestBaseBlock(ClassTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_local_multiple_start_passive_async()
+    t.test_start_passive_proxy()

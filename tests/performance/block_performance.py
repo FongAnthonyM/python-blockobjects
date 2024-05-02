@@ -241,8 +241,8 @@ class TestBaseBlock(PerformanceTest):
         pr = cProfile.Profile()
         pr.enable()
 
-        await block.inputs.put_required_callback_async("first", 2)
-        await block.inputs.put_required_callback_async("third", 3)
+        await block.inputs.put_callback_async("first", 2)
+        await block.inputs.put_callback_async("third", 3)
         outputs_1 = await block.outputs.get_all_async()
 
         pr.disable()
@@ -271,8 +271,8 @@ class TestBaseBlock(PerformanceTest):
         pr = cProfile.Profile()
         pr.enable()
 
-        await block1.inputs.put_required_callback_async("first", 2)
-        await block1.inputs.put_required_callback_async("third", 3)
+        await block1.inputs.put_callback_async("first", 2)
+        await block1.inputs.put_callback_async("third", 3)
         outputs_1 = await block2.outputs.get_all_async()
 
         pr.disable()
@@ -324,15 +324,15 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_start_passive_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start_passive()
 
         pr = cProfile.Profile()
         pr.enable()
 
-        block.inputs.put_required_callback("first", 2)
-        block.inputs.put_required_callback("third", 3)
+        block.inputs.put_callback("first", 2)
+        block.inputs.put_callback("third", 3)
 
         outputs_1 = block.outputs.get_all()
 
@@ -365,8 +365,8 @@ class TestBaseBlock(PerformanceTest):
         pr = cProfile.Profile()
         pr.enable()
 
-        block1.inputs.put_required_callback("first", 2)
-        block1.inputs.put_required_callback("third", 3)
+        block1.inputs.put_callback("first", 2)
+        block1.inputs.put_callback("third", 3)
         outputs_1 = block2.outputs.get_all()
 
         pr.disable()
@@ -383,4 +383,4 @@ class TestBaseBlock(PerformanceTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_local_multiple_start_passive_async_profile()
+    t.test_io_start_passive_profile()

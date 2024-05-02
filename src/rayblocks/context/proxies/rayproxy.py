@@ -22,7 +22,7 @@ from baseobjects.typing import AnyCallable
 from baseobjects.operations import iter_public_method_names
 from src.blockobjects.process.context import ProxyInterface, BaseProcessingContext
 import ray
-from ray import get
+from ray import get, kill
 from ray.actor import ActorClass, ActorHandle
 
 # Local Packages #
@@ -176,4 +176,10 @@ class RayProxy(ProxyInterface):
 
     # State
     def _is_alive(self) -> bool:
+        """Returns True if the proxy server is alive, False otherwise."""
         return self._actor is not None
+
+    def _kill_server(self) -> None:
+        """Kills the server which the proxy is running on."""
+        kill(self._actor)
+        self._actor = None

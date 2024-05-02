@@ -32,21 +32,32 @@ class IOMap(NamedTuple):
     links: dict[str, "IOMap"] | None = None
 
 
-# Todo: add readinesss check and default return value!
 class BaseIO(BaseObject):
-    """An abstract class for IO objects."""
+    """An abstract class for IO objects.
+
+     Attributes:
+        empty_sentinel: A sentinel object representing an empty IO object.
+    """
 
     # Attributes #
     empty_sentinel: SentinelObject = SentinelObject("io_empty")
 
     # Instance Methods #
     # State
-    def empty(self) -> bool:
-        """Returns True if the IO object is empty, False otherwise."""
+    def empty(self):
+        """Checks if the IO object is empty.
+
+        Returns:
+            True if the IO object is empty, False otherwise.
+        """
         raise NotImplementedError
 
-    def poll(self) -> bool:
-        """Returns True if the IO object has something in it, False otherwise."""
+    def poll(self):
+        """Checks if the IO object has something in it.
+
+        Returns:
+            True if the IO object has something in it, False otherwise.
+        """
         raise NotImplementedError
 
     # Get
@@ -54,11 +65,14 @@ class BaseIO(BaseObject):
         """Gets the requested item.
 
         Args:
-            *args: The arguments for getting the item.
-            **kwargs: The keyword arguments for getting the item.
+            *args: Variable length argument list for getting an item.
+            **kwargs: Arbitrary keyword arguments for getting an item.
 
         Returns:
-            The requested item.
+            Any: The requested item from the IO object.
+
+        Raises:
+            NotImplementedError: This is an abstract method that should be implemented in subclasses.
         """
         raise NotImplementedError
 
@@ -66,11 +80,14 @@ class BaseIO(BaseObject):
         """Asynchronously gets the requested item.
 
         Args:
-            *args: The arguments for getting the item.
-            **kwargs: The keyword arguments for getting the item.
+            *args: Variable length argument list for getting an item.
+            **kwargs: Arbitrary keyword arguments for getting an item.
 
         Returns:
-            The requested item.
+            Any: The requested item from the IO object.
+
+        Raises:
+            NotImplementedError: This is an abstract method that should be implemented in subclasses.
         """
         raise NotImplementedError
 

@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
+from asyncio import gather
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from abc import abstractmethod
 from collections.abc import Iterable, Mapping
@@ -71,13 +71,21 @@ class BlockGroup(BaseBlock):
     # Class Attributes #
     exposed: ClassVar[set] = BaseBlock.exposed | {"put_to_io", "put_to_io_async"}
 
+    init_blocks: ClassVar[bool] = True
+
     # Attributes #
+    lazy_blocks: bool = True
+    lazy_finalize: bool = True
+
     wrapped_getter: str | None = None
     wrapped_getter_async: str | None = None
     wrapped_putter: str | None = "put_to_io"
     wrapped_putter_async: str | None = "put_to_io_async"
     delegated_io: dict[str, IOWrapper]
 
+    create_links_kwargs: dict[str, Any] = {}
+
+    create_blocks_kwargs: dict[str, Any] = {}
     blocks: OrderableDict[str, BaseBlock]
 
     # Magic Methods #
@@ -90,6 +98,9 @@ class BlockGroup(BaseBlock):
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
+        init_blocks: bool | None = None,
+        create_kwargs: dict[str, Any] | None = None,
+        link_kwargs: dict[str, Any] | None = None,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
@@ -99,6 +110,9 @@ class BlockGroup(BaseBlock):
         # New Attributes #
         self.delegated_io = {}
 
+        self.create_links_kwargs = self.create_links_kwargs.copy()
+
+        self.create_blocks_kwargs = self.create_blocks_kwargs.copy()
         self.blocks = OrderableDict()
 
         # Parent Attributes #
@@ -113,6 +127,9 @@ class BlockGroup(BaseBlock):
                 init_io=init_io,
                 init_setup=init_setup,
                 setup_kwargs=setup_kwargs,
+                init_blocks=init_blocks,
+                create_kwargs=create_kwargs,
+                link_kwargs=link_kwargs,
                 start_server=start_server,
                 proxy_context=proxy_context,
                 _state=_state,
@@ -129,6 +146,9 @@ class BlockGroup(BaseBlock):
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
+        init_blocks: bool | None = None,
+        create_kwargs: dict[str, Any] | None = None,
+        link_kwargs: dict[str, Any] | None = None,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
@@ -147,7 +167,6 @@ class BlockGroup(BaseBlock):
         # New Assignment #
         self.inputs.wrapped_putter = "put_item"
         self.inputs.wrapped_getter_async = "put_item_async"
-        self.outputs.create_link.select("create_link_none")
 
         if blocks is not None:
             self.blocks.update(blocks)
@@ -157,13 +176,25 @@ class BlockGroup(BaseBlock):
             *args,
             will_proxy=will_proxy,
             init_io=init_io,
-            init_setup=init_setup,
+            init_setup=False,
             setup_kwargs=setup_kwargs,
             start_server=start_server,
             proxy_context=proxy_context,
             _state=_state,
             **kwargs,
         )
+
+        if create_kwargs is not None:
+            self.create_blocks_kwargs.update(create_kwargs)
+
+        if link_kwargs is not None:
+            self.create_links_kwargs.update(link_kwargs)
+
+        if _state is None and (init_blocks or (init_blocks is None and self.init_blocks)):
+            self.construct_blocks(self.create_blocks_kwargs, self.create_links_kwargs)
+
+        if _state is None and (init_setup or (init_setup is None and self.init_setup)):
+            self.setup(**({} if setup_kwargs is None else setup_kwargs))
 
     # Blocks
     def create_blocks(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
@@ -174,6 +205,17 @@ class BlockGroup(BaseBlock):
             override: Determines if the inner blocks will be overridden.
             **kwargs: The keyword arguments for creating the inner blocks.
         """
+
+    def construct_blocks(
+        self,
+        create_kwargs: dict[str, Any] | None = None,
+        link_kwargs: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.create_blocks(**(create_kwargs or {}))
+        self.link_inner_io(**(link_kwargs or {}))
+        self.lazy_blocks = False
 
     def start_blocks_passive(self) -> None:
         for block in self.blocks.values():
@@ -186,21 +228,6 @@ class BlockGroup(BaseBlock):
             block.start_passive()
 
     # IO
-    def start_inputs(self) -> None:
-        super().start_inputs()
-        for block in self.blocks.values():
-            block.start_inputs()
-
-    def start_outputs(self) -> None:
-        super().start_outputs()
-        for block in self.blocks.values():
-            block.start_outputs()
-
-    def materialize_io_links(self) -> None:
-        super().materialize_io_links()
-        for block in self.blocks.values():
-            block.materialize_io_links()
-
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
         """Links the inner blocks' IO.
 
@@ -208,6 +235,22 @@ class BlockGroup(BaseBlock):
             *args: The arguments for creating linking the inner blocks' IO.
             **kwargs: The keyword arguments for creating linking the inner blocks' IO.
         """
+
+    def start_inner_inputs(self) -> None:
+        for block in self.blocks.values():
+            block.start_inputs()
+
+    def start_inner_outputs(self) -> None:
+        for block in self.blocks.values():
+            block.start_outputs()
+
+    def start_inner_io(self) -> None:
+        for block in self.blocks.values():
+            block.start_io()
+
+    def materialize_inner_io(self) -> None:
+        for block in self.blocks.values():
+            block.materialize_io()
 
     def put_to_io(self, key, value, *args: Any, **kwargs: Any) -> None:
         self.delegated_io[key].put(value, *args, **kwargs)
@@ -244,45 +287,16 @@ class BlockGroup(BaseBlock):
     def correct_input_links(self, *args: Any, **kwargs: Any) -> None:
         self._correct_input_links(self.inputs)
 
-    # Setup
-    def setup(
-        self,
-        *args: Any,
-        create: bool = True,
-        create_kwargs: dict[str, Any] | None = None,
-        link: bool = True,
-        link_kwargs: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Creates the inner blocks and links their IO.
-
-        Args:
-            *args: The arguments for setup.
-            create: Determines if the inner block will be created.
-            create_kwargs: The keyword arguments for creating the inner blocks.
-            link: Determines if the inner IO will be linked between blocks.
-            link_kwargs: The keyword arguments for creating linking the inner blocks' IO.
-            **kwargs: The keyword arguments for setup.
-        """
-        if self.setup_kwargs is not None and (c_kwargs := self.setup_kwargs.get("create_kwargs")) is not None:
-            create_kwargs = c_kwargs | (create_kwargs if create_kwargs is not None else {})
-        elif create_kwargs is None:
-            create_kwargs = {}
-
-        if create:
-            self.create_blocks(**create_kwargs)
-
-        if self.setup_kwargs is not None and (l_kwargs := self.setup_kwargs.get("link_kwargs")) is not None:
-            link_kwargs = l_kwargs | (link_kwargs if link_kwargs is not None else {})
-        elif link_kwargs is None:
-            link_kwargs = {}
-
-        if link:
-            self.link_inner_io(**(link_kwargs if link_kwargs is not None else {}))
-            if self.will_proxy or self.inputs.is_proxy() or self.inputs.will_proxy:
-                self.correct_input_links()
-                if self.inputs.is_proxy():
-                    self.inputs.update_server_io()
+    def finalize_inner_io(self) -> None:
+        self.start_io()
+        self.start_inner_io()
+        self.materialize_io()
+        self.materialize_inner_io()
+        if self.will_proxy or self.inputs.is_proxy() or self.inputs.will_proxy:
+            self.correct_input_links()
+            if self.inputs.is_proxy():
+                self.inputs.update_server_io()
+        self.lazy_finalize = False
 
     # Evaluate
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
@@ -328,5 +342,49 @@ class BlockGroup(BaseBlock):
     # Execute
     def execute_all(self) -> None:
         """Executes all operation within this operation group."""
-        for operation in self.operations.values():
-            operation.execute()
+        for block in self.blocks.values():
+            block.execute()
+
+    # Start Passive
+    async def _start_passive(self, s_kwargs: dict[str, Any] | None = None) -> None:
+        """Starts the continuous execution of the block.
+
+        Args:
+            s_kwargs: The keyword arguments for block setup.
+        """
+        self._set_executing()
+
+        # Optionally Creates Blocks
+        if self.lazy_blocks:
+            self.construct_blocks(self.create_blocks_kwargs, self.create_links_kwargs)
+            self.lazy_finalize = True
+
+        if self.lazy_finalize:
+            self.finalize_inner_io()
+
+        # Optionally Setup
+        if self.sets_up:
+            await self.setup_async(**(s_kwargs or {}))
+
+        # Start Inner Blocks
+        await gather(*(block.start_passive_async(finalize=False) for block in self.blocks.values()))
+
+    # Stop Block Passive Execution
+    async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:
+        """Starts the continuous execution of the block.
+
+        Args:
+            t_kwargs: The keyword arguments for block teardown.
+        """
+        # Stop Inner Blocks
+        await gather(*(block.stop_passive_async() for block in self.blocks.values()))
+
+        # Optionally Teardown
+        if self.tears_down:
+            await self.teardown_async(**(t_kwargs or {}))
+
+        # Wait for any remaining Futures
+        for future in self.futures:
+            await future
+
+        self._clear_executing()

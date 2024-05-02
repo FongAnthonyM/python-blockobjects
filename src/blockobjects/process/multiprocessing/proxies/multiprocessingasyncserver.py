@@ -31,6 +31,7 @@ from ..futures import PipeFuture
 # Definitions #
 # Classes #
 class MultiprocessingAsyncServer(SharedMemoryServer):
+    public = SharedMemoryServer.public + ['delref']
 
     def __init__(self, *args, **kwargs):
         SharedMemoryServer.__init__(self, *args, **kwargs)
@@ -145,3 +146,23 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
                 util.info(' ... exception was %r', e)
                 conn.close()
                 sys.exit(1)
+
+    def delref(self, c, ident):
+        if ident not in self.id_to_refcount and ident in self.id_to_local_proxy_obj:
+            util.debug('Server DECREF skipping %r', ident)
+            return
+
+        with self.mutex:
+            self.id_to_refcount[ident] = 0
+            del self.id_to_refcount[ident]
+
+        if ident not in self.id_to_refcount:
+            # Two-step process in case the object turns out to contain other
+            # proxy objects (e.g. a managed list of managed lists).
+            # Otherwise, deleting self.id_to_obj[ident] would trigger the
+            # deleting of the stored value (another managed object) which would
+            # in turn attempt to acquire the mutex that is already held here.
+            self.id_to_obj[ident] = (None, (), None)  # thread-safe
+            util.debug('disposing of obj with id %r', ident)
+            with self.mutex:
+                del self.id_to_obj[ident]
