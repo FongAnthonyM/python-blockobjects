@@ -45,13 +45,17 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
         loop.run_forever()
 
     def set_future_result(self, c_future, future, conn, typeid):
-        res = future.result()
-        if typeid:
-            rident, rexposed = self.create(conn, typeid, res)
-            token = Token(typeid, self.address, rident)
-            msg = ('#PROXY', (rexposed, token))
+        try:
+            res = future.result()
+        except Exception as e:
+            msg = ('#ERROR', e)
         else:
-            msg = ('#RETURN', res)
+            if typeid:
+                rident, rexposed = self.create(conn, typeid, res)
+                token = Token(typeid, self.address, rident)
+                msg = ('#PROXY', (rexposed, token))
+            else:
+                msg = ('#RETURN', res)
         c_future.set_result(msg)
 
     def serve_client(self, conn):
@@ -92,7 +96,7 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
                         c_future = PipeFuture(loop=self._loop)
                         # Check if coroutine is done, returning the result otherwise, return a future.
                         if res.done():
-                            res =  res.result()
+                            res = res.result()
                             if typeid:
                                 rident, rexposed = self.create(conn, typeid, res)
                                 token = Token(typeid, self.address, rident)

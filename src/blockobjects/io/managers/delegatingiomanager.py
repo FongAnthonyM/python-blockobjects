@@ -55,7 +55,7 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
         "is_listen_link",
         "default_io",
     }
-    local_methods: ClassVar[set] = {"update_server_io", "set_callbacks"}
+    local_methods: ClassVar[set] = {"update_server_io", "set_callbacks", "set_callbacks_async"}
 
     default_get: ClassVar[str] = "get_required"
     default_get_async: ClassVar[str] = "get_required_async"
@@ -110,3 +110,33 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
         else:
             self.callback = func
             self.callback_async = func_async
+
+    async def set_callbacks_async(self, func, func_async) -> None:
+        if isinstance(func, bytes):
+            func = dill.loads(func)
+        if isinstance(func_async, bytes):
+            func_async = dill.loads(func_async)
+
+        if self.is_proxy():
+            if (weak := getattr(func, "_self_", None)) is not None:
+                func = MethodType(func.__wrapped__, weak())
+            if (weak := getattr(func_async, "_self_", None)) is not None:
+                func_async = MethodType(func_async.__wrapped__, weak())
+
+            try:
+                await self._proxy.set_callbacks_async(func, func_async)
+            except:
+                await self._proxy.set_callbacks_async(dill.dumps(func), dill.dumps(func_async))
+        else:
+            self.callback = func
+            self.callback_async = func_async
+
+    # Proxy
+    def _stop_server(self, update: bool = True) -> None:
+        """Stops the remote server relative to this object.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        self.stop()
+        super()._stop_server(update)

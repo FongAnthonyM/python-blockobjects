@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import gather, create_task, Task
+from asyncio import gather, create_task, Task, CancelledError
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from collections.abc import Iterable, Callable
 from collections import deque
@@ -381,7 +381,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         other.links_from[key] = (destination, self, source)
         if self.is_listen_link(self, other):
             other.scheduled_listener_links.add(key)
-            self.data[source] = other if destination is None else other.create_link_none(destination, *args, **kwargs)
+            if destination is None:
+                self.data[source] = other
         else:
             if destination is None:
                 self.data[source] = other
@@ -401,7 +402,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.links_from[key] = (destination, other, source)
         if self.is_listen_link(other, self):
             self.scheduled_listener_links.add(key)
-            other.data[source] = self if destination is None else self.create_link_none(destination, *args, **kwargs)
+            if destination is None:
+                other.data[source] = self
         else:
             if destination is None:
                 other.data[source] = self
@@ -440,6 +442,16 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # Callback
     def set_callbacks(self, func, func_async) -> None:
+        """Sets the callback functions.
+
+        Args:
+            func: The synchronous callback function.
+            func_async: The asynchronous callback function.
+        """
+        self.callback = func
+        self.callback_async = func_async
+
+    async def set_callbacks_async(self, func, func_async) -> None:
         """Sets the callback functions.
 
         Args:
@@ -564,6 +576,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if self.callback_executor is None and await self.callback_condition_async():
             self.callback_executor = create_task(self.execute_callback_async(*args, **kwargs))
             self.callback_executor.add_done_callback(self.remove_executor)
+
+    def cancel_callbacks(self) -> None:
+        for task in self.callback_tasks:
+            task.cancel()
 
     # Get
     def get_item(self, name: str, **kwargs: Any) -> Any:
@@ -945,6 +961,16 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         for task in chain(self.get_tasks, self.put_tasks):
             task.cancel()
 
+    def stop(self) -> None:
+        self.cancel_tasks()
+        self.stop_listeners()
+        self.cancel_callbacks()
+
+    async def stop_async(self) -> None:
+        self.cancel_tasks()
+        self.stop_listeners()
+        self.cancel_callbacks()
+
     # Listening
     async def listen_link_async(self, key: tuple[int, int, int, int], *args, **kwargs) -> None:
         """Put an item into an IO object.
@@ -969,17 +995,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if not self._is_listening:
             self._is_listening = True
         for key in self.scheduled_listener_links:
-            task = create_task(self.listen_link_async(key))
-            self.listeners[key] = task
-            task.add_done_callback(partial(self._remove_listener, key=key))
+            self.listeners[key] = create_task(self.listen_link_async(key))
 
     async def start_listeners_async(self) -> None:
         if not self._is_listening:
             self._is_listening = True
         for key in self.scheduled_listener_links:
-            task = create_task(self.listen_link_async(key))
-            self.listeners[key] = task
-            task.add_done_callback(partial(self._remove_listener, key=key))
+            self.listeners[key] = create_task(self.listen_link_async(key))
 
     def stop_listeners(self, msg: Any | None = None) -> None:
         self._is_listening = False

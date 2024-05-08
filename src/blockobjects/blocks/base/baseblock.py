@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import run, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
+from asyncio import run, gather, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
 from asyncio.events import AbstractEventLoop, _get_running_loop
 from abc import abstractmethod
 from collections.abc import Iterable
@@ -394,7 +394,12 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.execute_output_async.select("_execute_multiple_outputs_async")
                 self.format_output.select("multiple_outputs")
 
-    def set_input_callback(self, name: str | None = None, name_async: str | None = None) -> None:
+    def set_input_callback(
+        self,
+        name: str | None = None,
+        name_async: str | None = None,
+        as_proxy: bool = False,
+    ) -> None:
         if name is None:
             name = self.input_callback_method
 
@@ -408,11 +413,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             return await getattr(obj, name_async)(**inputs)
 
         # Use BaseMethod because it uses weak references
-        method = BaseMethod(func=callback, instance=self)
-        method_async = BaseMethod(func=callback_async, instance=self)
+        method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
+        method_async = BaseMethod(func=callback_async, instance=self._proxy if as_proxy else self)
         self.inputs.set_callbacks(method, method_async)
 
-    def set_input_callback_proxy(self, name: str | None = None, name_async: str | None = None) -> None:
+    async def set_input_callback_async(
+        self,
+        name: str | None = None,
+        name_async: str | None = None,
+        as_proxy: bool = False,
+    ) -> None:
         if name is None:
             name = self.input_callback_method
 
@@ -426,9 +436,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             return await getattr(obj, name_async)(**inputs)
 
         # Use BaseMethod because it uses weak references
-        method = BaseMethod(func=callback, instance=self._proxy)
-        method_async = BaseMethod(func=callback_async, instance=self._proxy)
-        self.inputs.set_callbacks(method, method_async)
+        method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
+        method_async = BaseMethod(func=callback_async, instance=self._proxy if as_proxy else self)
+        await self.inputs.set_callbacks_async(method, method_async)
 
     def one_output(self, output) -> tuple:
         """Formats an output if was the only output of the block."""
@@ -886,16 +896,18 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 if finalize:
                     self.finalize_io()
                 self._start_server()
-                self.set_input_callback_proxy()
+                self.set_input_callback(as_proxy=True)
             self._proxy.start_passive(None, s_kwargs)
         elif (loop := self.async_event_loop) is not None:
             self.set_input_callback()
-            run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
+            self.inputs.start_listeners()
             self.outputs.start_listeners()
+            run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
             self.set_input_callback()
-            self._start_passive_async_loop(s_kwargs)
+            self.inputs.start_listeners()
             self.outputs.start_listeners()
+            self._start_passive_async_loop(s_kwargs)
 
     async def start_passive_async(
         self,
@@ -919,26 +931,15 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 if finalize:
                     self.finalize_io()
                 self._start_server()
-                self.set_input_callback_proxy()
+                await self.set_input_callback_async(as_proxy=True)
             await self._proxy.start_passive_async(None, s_kwargs)
         else:
-            self.set_input_callback()
+            await self.set_input_callback_async()
+            await self.inputs.start_listeners_async()
             await self.outputs.start_listeners_async()
             await self._start_passive(s_kwargs)
 
     # Stop Block Passive Execution
-    def _stop_server(self, update: bool = True) -> None:
-        """Stops the remote server relative to this object.
-
-        Args:
-            update: Determines if this object should be updated from the server before stopping.
-        """
-        self.inputs.cancel_tasks()
-        self.inputs.stop_server(update)
-        self.outputs.cancel_tasks()
-        self.outputs.stop_server(update)
-        super()._stop_server(update)
-
     async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
@@ -962,6 +963,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             t_kwargs: The keyword arguments for block teardown.
         """
         await self._stop_passive(t_kwargs)
+        await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     def stop_passive(self, t_kwargs: dict[str, Any] | None = None, server: bool = True, update: bool = True) -> None:
         """Stops the execution of this block, optionally stopping the server relative to this object.
@@ -976,10 +978,13 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.join_execution()
             self._stop_server(update)
         elif (loop := self.async_event_loop) is not None:
-            self.set_input_callback()
             run_coroutine_threadsafe(self._stop_passive(t_kwargs), loop)
+            self.inputs.stop()
+            self.outputs.stop()
         else:
             run(self._stop_passive(t_kwargs))
+            self.inputs.stop()
+            self.outputs.stop()
 
     async def stop_passive_async(
         self,
@@ -1000,6 +1005,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             self._stop_server(update)
         else:
             await self._stop_passive(t_kwargs)
+            await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     # Join Execution
     def join_execution(self, timeout: float | None = None) -> None:

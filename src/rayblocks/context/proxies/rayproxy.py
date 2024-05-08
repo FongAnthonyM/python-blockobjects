@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import iscoroutinefunction
+from asyncio import iscoroutinefunction, wrap_future
 from collections.abc import Iterable, Generator
 from typing import Any, ClassVar
 
@@ -22,7 +22,7 @@ from baseobjects.typing import AnyCallable
 from baseobjects.operations import iter_public_method_names
 from src.blockobjects.process.context import ProxyInterface, BaseProcessingContext
 import ray
-from ray import get, kill
+from ray import get, kill, ObjectRef
 from ray.actor import ActorClass, ActorHandle
 
 # Local Packages #
@@ -63,8 +63,9 @@ class RayProxy(ProxyInterface):
                 """Evaluates the wrapped object's method."""
                 return getattr(obj._actor, name).remote(*args, **kwargs)
         else:
-            def func_(obj, *args, **kwargs):
+            def func_(obj, *args, **kwargs) -> Any:
                 """Evaluates the wrapped object's method."""
+                print(f"{obj}.{name}")
                 return get(getattr(obj._actor, name).remote(*args, **kwargs))
 
         return func_
@@ -84,10 +85,11 @@ class RayProxy(ProxyInterface):
             proxy_classes[key] = proxy_class = type(name, (cls,), {})
             for name in exposed:
                 is_coro = iscoroutinefunction(getattr(target_cls, name))
-                if not is_coro and (a_name := f"{name}_async") in exposed:
-                    setattr(proxy_class, name, cls._create_proxy_method(a_name, False))
-                else:
-                    setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
+                setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
+                # if not is_coro and (a_name := f"{name}_async") in exposed:
+                #     setattr(proxy_class, name, cls._create_proxy_method(a_name, False))
+                # else:
+                #     setattr(proxy_class, name, cls._create_proxy_method(name, is_coro))
             proxy_class.exposed = set(exposed)
 
         # Return Proxy Class

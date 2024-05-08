@@ -36,7 +36,7 @@ from src.rayblocks import RayContext
 
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
 
 # Classes #
@@ -121,9 +121,12 @@ class GroupOne(BlockGroup):
 
 class TestBaseBlock(ClassTest):
 
-    async def local_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("ray")
-        block = GroupOne(init_setup=False, create_kwargs={"first_proxy": False, "second_proxy": False})
+    async def start_passive_async(self, group_proxy: bool, inner_one: bool, inner_two: bool):
+        block = GroupOne(
+            will_proxy=group_proxy,
+            init_setup=False,
+            create_kwargs={"first_proxy": inner_one, "second_proxy": inner_two},
+        )
         await block.start_passive_async()
 
         await block.inputs.put_item_async("one", 2)
@@ -136,24 +139,18 @@ class TestBaseBlock(ClassTest):
         assert outputs_1["out_two"] == 48
 
     def test_local_start_passive_async(self):
-        run(self.local_start_passive_async())
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=False))
+        run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=False))
+        run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=True))
+        run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=True))
 
-    async def partial_local_start_passive_async(self):
+    def test_proxy_start_passive_async(self):
         DEFAULT_PROCESS_CONTEXT.select_context("ray")
-        block = GroupOne(init_setup=False, create_kwargs={"first_proxy": True, "second_proxy": False})
-        await block.start_passive_async()
-
-        await block.inputs.put_item_async("one", 2)
-        await block.inputs.put_item_async("two", 3)
-        outputs_1 = await block.outputs.get_all_async()
-
-        await block.stop_passive_async()
-
-        assert outputs_1["out_one"] == 8
-        assert outputs_1["out_two"] == 48
-
-    def test_partial_local_start_passive_async(self):
-        run(self.partial_local_start_passive_async())
+        run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=False))
+        run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=False))
+        run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=True))
+        run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=True))
 
     async def local_multiple_start_passive_async(self):
         block1 = self.ExampleOne(init_setup=False)
