@@ -46,7 +46,14 @@ class ProcessDelegate(ContextualObjectInterface):
     _unexposed_: ClassVar[set] = {"is_proxy", "is_alive",  "get_context", "set_context"}
     unexposed: ClassVar[set] = set()
 
-    _local_methods_: ClassVar[set] = {"stop_server", "set_server_state", "update", "update_server"}
+    _local_methods_: ClassVar[set] = {
+        "stop_server",
+        "stop_server_async",
+        "set_server_state",
+        "set_server_state_async",
+        "update_async",
+        "update_server_async",
+    }
     local_methods: ClassVar[set] = set()
 
     # Class Methods #
@@ -178,8 +185,32 @@ class ProcessDelegate(ContextualObjectInterface):
         else:
             return getattr(self, name)
 
+    async def get_attribute_async(self, name: str, default: Any = search_sentinel) -> Any:
+        """Asynchronously get an attribute, delegated from either the local object or remote object.
+
+        Args:
+            name: The name of the attribute to get.
+            default: The default value to return if the attribute does not exist.
+
+        Returns:
+            The requested attribute.
+        """
+        if default is not search_sentinel:
+            return getattr(self, name, default)
+        else:
+            return getattr(self, name)
+
     def set_attribute(self, name: str, value: Any) -> None:
         """Delegated setting of an attribute in either the local object or remote object.
+
+        Args:
+            name: The name of the attribute to set.
+            value: The value to set the attribute to.
+        """
+        setattr(self, name, value)
+
+    async def set_attribute_async(self, name: str, value: Any) -> None:
+        """Asynchronously delegated setting of an attribute in either the local object or remote object.
 
         Args:
             name: The name of the attribute to set.
@@ -207,6 +238,14 @@ class ProcessDelegate(ContextualObjectInterface):
         """
         return self._get_state()
 
+    async def get_state_async(self) -> dict[str, Any]:
+        """Asynchronously, creates a dictionary of attributes, delegated from either the local object or remote object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        return self._get_state()
+
     def _set_state(self, state: dict[str, Any]) -> None:
         """Delegated building of either the local object or remote object from dictionary of attributes.
 
@@ -217,6 +256,14 @@ class ProcessDelegate(ContextualObjectInterface):
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Delegated building of either the local object or remote object from dictionary of attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        self._set_state(state)
+
+    async def set_state_async(self, state: dict[str, Any]) -> None:
+        """Asynchronously delegated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -234,6 +281,17 @@ class ProcessDelegate(ContextualObjectInterface):
         else:
             raise RuntimeError("Sever process must be alive")
 
+    async def set_server_state_async(self, state: dict[str, Any]) -> None:
+        """Asynchronously builds the remote server object from dictionary of attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        if self._is_proxy and (proxy := self._proxy) is not None and proxy._is_alive():
+            await proxy.set_state_async(state)
+        else:
+            raise RuntimeError("Sever process must be alive")
+
     def update(self) -> None:
         """Builds the local object from state of the remote server object."""
         if self._is_proxy:
@@ -242,10 +300,23 @@ class ProcessDelegate(ContextualObjectInterface):
             else:
                 raise RuntimeError("Remote process must be alive")
 
+    async def update_async(self) -> None:
+        """Asynchronously builds the local object from state of the remote server object."""
+        if self._is_proxy:
+            if (proxy := self._proxy) is not None and proxy._is_alive():
+                self.__setstate__(await proxy.get_state_async())
+            else:
+                raise RuntimeError("Remote process must be alive")
+
     def update_server(self) -> None:
         """Builds the remote server object from state of the local object."""
         if self._is_proxy:
             self.set_server_state(self._get_state())
+
+    async def update_server_async(self) -> None:
+        """Asynchronously builds the remote server object from state of the local object."""
+        if self._is_proxy:
+            await self.set_server_state_async(self._get_state())
 
     # Server Management
     def _start_server(self, args: tuple = (), kwargs: dict | None = None) -> None:
@@ -301,6 +372,23 @@ class ProcessDelegate(ContextualObjectInterface):
         # Set this object's state is not a proxy
         self._is_proxy = False
 
+    async def _stop_server_async(self, update: bool = True) -> None:
+        """Stops the remote server relative to this object.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        # Updates this object's attributes
+        if update:
+            await self.update_async()
+
+        # Remove the server (server should stop when de-referenced)
+        self._proxy._kill_server()
+        self._proxy = None
+
+        # Set this object's state is not a proxy
+        self._is_proxy = False
+
     def stop_server(self, update: bool = True) -> None:
         """Stops a remote server. If called multiple times, it will recursively stop the deepest server.
 
@@ -313,6 +401,21 @@ class ProcessDelegate(ContextualObjectInterface):
                     proxy.stop_sever(update)
                 else:
                     self._stop_server(update)
+            else:
+                raise RuntimeError("Server process must be alive")
+
+    async def stop_server_async(self, update: bool = True) -> None:
+        """Stops a remote server. If called multiple times, it will recursively stop the deepest server.
+
+        Args:
+            update: Determines if this object should be updated from the server before stopping.
+        """
+        if self.is_proxy():
+            if (proxy := self._proxy) is not None and proxy._is_alive():
+                if proxy.get_attribute("_is_proxy"):
+                    await proxy.stop_sever_async(update)
+                else:
+                    await self._stop_server_async(update)
             else:
                 raise RuntimeError("Server process must be alive")
 

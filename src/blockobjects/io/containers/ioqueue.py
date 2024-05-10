@@ -1,5 +1,7 @@
 """ ioqueue.py
-An IO object which stores values within it using a queue
+IOQueue stores values within it using a queue. It mixes in ContextualQueue to give it dynamic implementation where its
+implementation depend on which multiprocessing context it is assigned to, giving it the flexibility to be used with
+several multiprocessing frameworks. Additionally, the context can be changed at any time.
 """
 # Package Header #
 from ...header import *
@@ -24,4 +26,9 @@ from ..base import BaseIO
 # Definitions #
 # Classes #
 class IOQueue(ContextualQueue, BaseIO):
-    """An IO object which stores values within it using a queue."""
+    """An IO object which stores values within it using a queue.
+
+    IOQueue mixes in ContextualQueue to give it dynamic implementation where its implementation depend on which
+    multiprocessing context it is assigned to, giving it the flexibility to be used with several multiprocessing
+    frameworks. Additionally, the context can be changed at any time.
+    """

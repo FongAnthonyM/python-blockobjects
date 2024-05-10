@@ -13,7 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import gather
+from asyncio import gather, Future, Task, create_task, run_coroutine_threadsafe, iscoroutinefunction, wait_for
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from abc import abstractmethod
 from collections.abc import Iterable, Mapping
@@ -31,7 +31,7 @@ from ...process import ProcessDelegate, delegatemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import DelegatingIOManager, IOWrapper, IORouter
+from ...io import BaseIO, DelegatingIOManager, IOWrapper, IORouter
 from .baseblock import BaseBlock
 
 
@@ -69,11 +69,22 @@ class BlockGroup(BaseBlock):
         **kwargs: Keyword arguments for inheritance.
     """
     # Class Attributes #
-    exposed: ClassVar[set] = BaseBlock.exposed | {"put_to_io", "put_to_io_async"}
+    exposed: ClassVar[set] = BaseBlock.exposed | {
+        "create_blocks",
+        "create_blocks_async",
+        "link_inner_io",
+        "link_inner_io_async",
+        "build_delegated_inputs",
+        "get_delegated_io",
+        "get_delegated_io_async",
+        "put_delegated_io",
+        "put_delegated_io_async",
+    }
 
     init_blocks: ClassVar[bool] = True
 
     # Attributes #
+    sets_up_blocks: bool = True
     lazy_blocks: bool = True
     lazy_finalize: bool = True
 
@@ -206,6 +217,19 @@ class BlockGroup(BaseBlock):
             **kwargs: The keyword arguments for creating the inner blocks.
         """
 
+    async def create_blocks_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        return self.create_blocks(*args, override=override, **kwargs)
+
+    def setup_blocks(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_blocks:
+            self.create_blocks(*args, **kwargs)
+            self.sets_up_blocks = False
+
+    async def setup_blocks_async(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_blocks:
+            await self.create_blocks_async(*args, **kwargs)
+            self.sets_up_blocks = False
+
     def construct_blocks(
         self,
         create_kwargs: dict[str, Any] | None = None,
@@ -236,67 +260,145 @@ class BlockGroup(BaseBlock):
             **kwargs: The keyword arguments for creating linking the inner blocks' IO.
         """
 
+    async def link_inner_io_async(self, *args: Any, **kwargs: Any) -> Any:
+        return self.link_inner_io(*args, **kwargs)
+
     def start_inner_inputs(self) -> None:
         for block in self.blocks.values():
             block.start_inputs()
+
+    async def start_inner_inputs_async(self) -> None:
+        await gather(*(block.start_inputs_async() for block in self.blocks.values()))
 
     def start_inner_outputs(self) -> None:
         for block in self.blocks.values():
             block.start_outputs()
 
+    async def start_inner_outputs_async(self) -> None:
+        await gather(*(block.start_outputs_async() for block in self.blocks.values()))
+
     def start_inner_io(self) -> None:
         for block in self.blocks.values():
             block.start_io()
+
+    async def start_inner_io_async(self) -> None:
+        await gather(*(block.start_io_async() for block in self.blocks.values()))
 
     def materialize_inner_io(self) -> None:
         for block in self.blocks.values():
             block.materialize_io()
 
-    def put_to_io(self, key, value, *args: Any, **kwargs: Any) -> None:
-        self.delegated_io[key].put(value, *args, **kwargs)
+    async def materialize_inner_io_async(self) -> None:
+        await gather(*(block.materialize_io_async() for block in self.blocks.values()))
 
-    async def put_to_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
-        await self.delegated_io[key].put_async(value, *args, **kwargs)
+    def setup_inner_io(self) -> None:
+        for block in self.blocks.values():
+            block.setup_io()
 
-    def create_io_wrapper(self, key: tuple, io_: IOWrapper,  *args: Any, **kwargs: Any) -> IOWrapper:
-        self.delegated_io[key] = io_
+    async def setup_inner_io_async(self) -> None:
+        await gather(*(block.setup_io_async() for block in self.blocks.values()))
 
-        getter = None if self.wrapped_getter is None else partial(getattr(self, self.wrapped_getter), key)
-        if self.wrapped_getter_async is None:
-            getter_async = None
-        else:
-            getter_async = partial(getattr(self, self.wrapped_getter_async), key)
-
-        putter = None if self.wrapped_putter is None else partial(getattr(self, self.wrapped_putter), key)
-        if self.wrapped_putter_async is None:
-            putter_async = None
-        else:
-            putter_async = partial(getattr(self, self.wrapped_putter_async), key)
-
-        return IOWrapper(getter, getter_async, putter, putter_async)
-
-    def _correct_input_links(self, io_router: IORouter):
-        for key, (source, other, destination) in io_router.items():
+    def _build_delegated_io(self,  io_router: IORouter) -> None:
+        for key, (source, other, destination) in io_router.links_to.items():
             io_ = io_router[source]
             if isinstance(io_, IORouter):
                 self._correct_input_links(io_)
             else:
                 if not other.is_proxy() and not other.will_proxy:
-                    io_router[source] = self.create_io_wrapper(key, io_)
+                    self.delegated_io[key] = io_
+
+    def build_delegated_inputs(self) -> None:
+        if self.inputs.is_proxy():
+            self.inputs.update()
+        self._build_delegated_io(self.inputs)
+
+    def get_delegated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
+        self.delegated_io[key].get(value, *args, **kwargs)
+
+    async def get_delegated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
+        await self.delegated_io[key].get_async(value, *args, **kwargs)
+
+    def put_delegated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
+        self.delegated_io[key].put(value, *args, **kwargs)
+
+    async def put_delegated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
+        await self.delegated_io[key].put_async(value, *args, **kwargs)
+
+    def create_delegate_io_wrapper(self, key: tuple) -> IOWrapper:
+        get = self.get_delegated_io
+        get_async = self.get_delegated_io_async
+        put = self.put_delegated_io
+        put_async = self.put_delegated_io_async
+
+        if self.is_alive():
+            get.__self__ = self._proxy
+            get_async.__self__ = self._proxy
+            put.__self__ = self._proxy
+            put_async.__self__ = self._proxy
+
+        getter = partial(get, key)
+        getter_async = partial(get_async, key)
+        putter = partial(put, key)
+        putter_async = partial(put_async, key)
+
+        return IOWrapper(getter, getter_async, putter, putter_async)
+
+    def _set_delegated_io_links(self, io_router: IORouter):
+        for key, (source, other, destination) in io_router.links_to.items():
+            io_ = io_router[source]
+            if isinstance(io_, IORouter):
+                self._set_delegated_io_links(io_)
+            else:
+                if not other.is_proxy() and not other.will_proxy:
+                    io_router[source] = self.create_delegate_io_wrapper(key)
+
+    def set_delegated_input_links(self) -> None:
+        if self.inputs.is_proxy():
+            self.inputs.update()
+        self._set_delegated_io_links(self.inputs)
 
     def correct_input_links(self, *args: Any, **kwargs: Any) -> None:
-        self._correct_input_links(self.inputs)
+        self.build_delegated_inputs()
+        self.set_delegated_input_links()
 
-    def finalize_inner_io(self) -> None:
-        self.start_io()
-        self.start_inner_io()
-        self.materialize_io()
-        self.materialize_inner_io()
-        if self.will_proxy or self.inputs.is_proxy() or self.inputs.will_proxy:
+    def finalize_io(self) -> None:
+        self.correct_input_links()
+        self.set_input_callback()
+        self.inputs.start_listeners()
+        self.outputs.start_listeners()
+
+    async def finalize_io_async(self) -> None:
+        if self.is_alive():
             self.correct_input_links()
+        await self.set_input_callback_async()
+        await self.inputs.start_listeners_async()
+        await self.outputs.start_listeners_async()
+
+    def setup_io(self) -> None:
+        if self.sets_up_io:
             if self.inputs.is_proxy():
                 self.inputs.update_server_io()
-        self.lazy_finalize = False
+            if self.outputs.is_proxy():
+                self.outputs.update_server_io()
+
+            self.link_inner_io()
+            self.start_inner_io()
+            self.setup_inner_io()
+
+            self.sets_up_io = False
+
+    async def setup_io_async(self) -> None:
+        if self.sets_up_io:
+            if self.inputs.is_proxy():
+                await self.inputs.update_server_io_async()
+            if self.outputs.is_proxy():
+                await self.outputs.update_server_io_async()
+
+            await self.link_inner_io_async()
+            await self.start_inner_io_async()
+            await self.setup_inner_io_async()
+
+            self.sets_up_io = False
 
     # Evaluate
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
@@ -354,20 +456,84 @@ class BlockGroup(BaseBlock):
         """
         self._set_executing()
 
-        # Optionally Creates Blocks
-        if self.lazy_blocks:
-            self.construct_blocks(self.create_blocks_kwargs, self.create_links_kwargs)
-            self.lazy_finalize = True
-
-        if self.lazy_finalize:
-            self.finalize_inner_io()
-
         # Optionally Setup
         if self.sets_up:
             await self.setup_async(**(s_kwargs or {}))
 
         # Start Inner Blocks
-        await gather(*(block.start_passive_async(finalize=False) for block in self.blocks.values()))
+        await gather(*(block.start_passive_async() for block in self.blocks.values()))
+
+    def start_passive(
+        self,
+        as_proxy: bool | None = None,
+        s_kwargs: dict[str, Any] | None = None,
+        finalize: bool = True,
+    ) -> None:
+        """Starts the continuous execution of the block, delegating to another process if selected.
+
+        Args:
+            as_proxy: Determines if this object should run in a separate process.
+            s_kwargs: The keyword arguments for block setup.
+        """
+        # Raise Error if the task is already running.
+        if self.is_executing():
+            raise RuntimeError(f"{self} task is already running.")
+
+        # Setup IO and Start Proxy
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            self.setup_blocks()
+            self.start_io()
+            self.setup_io()
+            self._start_server()
+            self.finalize_io()
+        else:
+            self.setup_blocks()
+            self.setup_io()
+            if finalize:
+                self.finalize_io()
+
+        # Use Correct Context
+        if self.is_alive():
+            self._proxy.start_passive(None, s_kwargs)
+        elif (loop := self.async_event_loop) is not None:
+            run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
+        else:
+            self._start_passive_async_loop(s_kwargs)
+
+    async def start_passive_async(
+        self,
+        as_proxy: bool | None = None,
+        s_kwargs: dict[str, Any] | None = None,
+        finalize: bool = True,
+    ) -> None:
+        """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
+
+        Args:
+            as_proxy: Determines if this object should run in a separate process.
+            s_kwargs: The keyword arguments for block setup.
+        """
+        # Raise Error if the task is already running.
+        if self.is_executing():
+            raise RuntimeError(f"{self} task is already running.")
+
+        # Setup IO and Start Proxy
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            await self.setup_blocks_async()
+            await self.start_io_async()
+            await self.setup_io_async()
+            self._start_server()
+            await self.finalize_io_async()
+        else:
+            await self.setup_blocks_async()
+            await self.setup_io_async()
+            if finalize:
+                await self.finalize_io_async()
+
+        # Use Correct Context
+        if self.is_alive():
+            await self._proxy.start_passive_async(None, s_kwargs)
+        else:
+            await self._start_passive(s_kwargs)
 
     # Stop Block Passive Execution
     async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:

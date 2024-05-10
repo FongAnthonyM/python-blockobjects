@@ -111,6 +111,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     _executing_waiters: deque[Future]
 
     # IO
+    sets_up_io: bool = True
     inputs: DelegatingIOManager
     outputs: DelegatingIOManager
 
@@ -349,11 +350,25 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
             self.inputs.start_server()
 
+    async def start_inputs_async(self) -> None:
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+
     def start_outputs(self) -> None:
         if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
             self.outputs.start_server()
 
+    async def start_outputs_async(self) -> None:
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
     def start_io(self) -> None:
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    async def start_io_async(self) -> None:
         if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
             self.inputs.start_server()
         if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
@@ -367,9 +382,39 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             self.outputs.update_server_io()
             self.outputs.start_listeners()
 
+    async def materialize_io_async(self) -> None:
+        if self.inputs.is_proxy():
+            await self.inputs.update_server_io_async()
+            await self.inputs.start_listeners_async()
+        if self.outputs.is_proxy():
+            await self.outputs.update_server_io_async()
+            await self.outputs.start_listeners_async()
+
+    def setup_io(self) -> None:
+        if self.sets_up_io:
+            if self.inputs.is_proxy():
+                self.inputs.update_server_io()
+            if self.outputs.is_proxy():
+                self.outputs.update_server_io()
+            self.sets_up_io = False
+
+    async def setup_io_async(self) -> None:
+        if self.sets_up_io:
+            if self.inputs.is_proxy():
+                await self.inputs.update_server_io_async()
+            if self.outputs.is_proxy():
+                await self.outputs.update_server_io_async()
+            self.sets_up_io = False
+
     def finalize_io(self) -> None:
-        self.start_io()
-        self.materialize_io()
+        self.set_input_callback()
+        self.inputs.start_listeners()
+        self.outputs.start_listeners()
+
+    async def finalize_io_async(self) -> None:
+        await self.set_input_callback_async()
+        await self.inputs.start_listeners_async()
+        await self.outputs.start_listeners_async()
 
     def set_io_execution(self) -> None:
         match len(self.inputs):
@@ -398,7 +443,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self,
         name: str | None = None,
         name_async: str | None = None,
-        as_proxy: bool = False,
+        as_proxy: bool = True,
     ) -> None:
         if name is None:
             name = self.input_callback_method
@@ -413,8 +458,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             return await getattr(obj, name_async)(**inputs)
 
         # Use BaseMethod because it uses weak references
-        method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
-        method_async = BaseMethod(func=callback_async, instance=self._proxy if as_proxy else self)
+        instance = self._proxy if as_proxy and self.is_alive() else self
+        method = BaseMethod(func=callback, instance=instance)
+        method_async = BaseMethod(func=callback_async, instance=instance)
         self.inputs.set_callbacks(method, method_async)
 
     async def set_input_callback_async(
@@ -474,7 +520,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         """
 
     async def evaluate_async(self, *args: Any, **kwargs: Any) -> Any:
-        """Asynchronously runs the teardown."""
+        """Asynchronously runs."""
         if iscoroutinefunction(self.evaluate):
             return await self.evaluate(*args, **(self.teardown_kwargs | kwargs))
         else:
@@ -890,23 +936,23 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.is_executing():
             raise RuntimeError(f"{self} task is already running.")
 
-        # Run as Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy):
-            if not self.is_alive():
-                if finalize:
-                    self.finalize_io()
-                self._start_server()
-                self.set_input_callback(as_proxy=True)
+        # Setup IO and Start Proxy
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            self.start_io()
+            self.setup_io()
+            self._start_server()
+            self.finalize_io()
+        else:
+            self.setup_io()
+            if finalize:
+                self.finalize_io()
+
+        # Use Correct Context
+        if self.is_alive():
             self._proxy.start_passive(None, s_kwargs)
         elif (loop := self.async_event_loop) is not None:
-            self.set_input_callback()
-            self.inputs.start_listeners()
-            self.outputs.start_listeners()
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
-            self.set_input_callback()
-            self.inputs.start_listeners()
-            self.outputs.start_listeners()
             self._start_passive_async_loop(s_kwargs)
 
     async def start_passive_async(
@@ -925,18 +971,21 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.is_executing():
             raise RuntimeError(f"{self} task is already running.")
 
+        # Setup IO and Start Proxy
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            await self.start_io_async()
+            await self.setup_io_async()
+            self._start_server()
+            await self.finalize_io_async()
+        else:
+            await self.setup_io_async()
+            if finalize:
+                await self.finalize_io_async()
+
         # Use Correct Context
-        if as_proxy or (as_proxy is None and self.will_proxy):
-            if not self.is_alive():
-                if finalize:
-                    self.finalize_io()
-                self._start_server()
-                await self.set_input_callback_async(as_proxy=True)
+        if self.is_alive():
             await self._proxy.start_passive_async(None, s_kwargs)
         else:
-            await self.set_input_callback_async()
-            await self.inputs.start_listeners_async()
-            await self.outputs.start_listeners_async()
             await self._start_passive(s_kwargs)
 
     # Stop Block Passive Execution
@@ -1002,7 +1051,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             await self._proxy.stop_passive_server(t_kwargs)
             if update:
                 await self.join_execution_async()
-            self._stop_server(update)
+            await self._stop_server_async(update)
         else:
             await self._stop_passive(t_kwargs)
             await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))

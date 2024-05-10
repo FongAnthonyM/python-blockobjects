@@ -55,7 +55,13 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
         "is_listen_link",
         "default_io",
     }
-    local_methods: ClassVar[set] = {"update_server_io", "set_callbacks", "set_callbacks_async"}
+    local_methods: ClassVar[set] = {
+        "link_forward",
+        "update_server_io",
+        "update_server_io_async",
+        "set_callbacks",
+        "set_callbacks_async",
+    }
 
     default_get: ClassVar[str] = "get_required"
     default_get_async: ClassVar[str] = "get_required_async"
@@ -89,6 +95,22 @@ class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
 
     def update_server_io(self):
         self._proxy.set_deepest_io(super().get_deepest_io())
+
+    async def update_server_io_async(self):
+        await self._proxy.set_deepest_io_async(super().get_deepest_io())
+
+    def link_forward(
+        self,
+        source: str,
+        other: "IORouter",
+        destination: str | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        super().link_forward(source, other, destination, *args, **kwargs)
+        if self.is_proxy():
+            self._proxy.link_forward(source, other, destination, *args, **kwargs)
+
 
     # Callback
     def set_callbacks(self, func, func_async) -> None:

@@ -175,6 +175,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             state: The attributes to build this object from.
         """
         super().__setstate__(state)
+        self.get_tasks = set()
+        self.put_tasks = set()
+        self.listeners = dict()
+        self.callback_tasks = set()
         self.directly_linked = WeakSet(state.get("directly_linked", None))
 
     # Set Item
@@ -352,6 +356,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         return {k: (v.get_deepest_io() if isinstance(v, IORouter) else v) for k, v in self.data.items()}
 
     def set_deepest_io(self, io_: dict[str, BaseIO | None]) -> None:
+        for k, v in io_.items():
+            if isinstance(v, dict):
+                self.data[k].set_deepest_io(v)
+            else:
+                self.data[k] = v
+
+    async def set_deepest_io_async(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
             if isinstance(v, dict):
                 self.data[k].set_deepest_io(v)
@@ -995,13 +1006,15 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if not self._is_listening:
             self._is_listening = True
         for key in self.scheduled_listener_links:
-            self.listeners[key] = create_task(self.listen_link_async(key))
+            if key not in self.listeners:
+                self.listeners[key] = create_task(self.listen_link_async(key))
 
     async def start_listeners_async(self) -> None:
         if not self._is_listening:
             self._is_listening = True
         for key in self.scheduled_listener_links:
-            self.listeners[key] = create_task(self.listen_link_async(key))
+            if key not in self.listeners:
+                self.listeners[key] = create_task(self.listen_link_async(key))
 
     def stop_listeners(self, msg: Any | None = None) -> None:
         self._is_listening = False

@@ -1,5 +1,5 @@
 """ iowrapper.py
-An IO object which wraps another function io object.
+An IO Object which wraps other functions or methods as an IO Object.
 """
 # Package Header #
 from ...header import *
@@ -13,7 +13,6 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from collections.abc import Callable
 from typing import Any
 
 # Third-Party Packages #
@@ -26,11 +25,21 @@ from .baseio import BaseIO
 # Definitions #
 # Classes #
 class IOWrapper(BaseIO):
-    """An IO object which stores a single value within it.
+    """An IO Object which wraps other functions or methods as an IO Object.
+
+    Attributes:
+        getter: A function or method that is used to get data.
+        getter_async: An asynchronous function or method that is used to get data.
+        putter: A function or method that is used to put data.
+        putter_async: An asynchronous function or method that is used to put data.
 
     Args:
-        *args: Arguments for inheritance.
-        **kwargs: Keyword arguments for inheritance.
+        getter: A function or method that is used to get data.
+        getter_async: An asynchronous function or method that is used to get data.
+        putter: A function or method that is used to put data.
+        putter_async: An asynchronous function or method that is used to put data.
+        *args: Variable length argument list.
+        **kwargs: Arbitrary keyword arguments.
     """
 
     # Attributes #
@@ -61,15 +70,18 @@ class IOWrapper(BaseIO):
 
     # Instance Methods #
     # Get
-    def get(self, *args, **kwargs) -> Any:
-        """Gets the requested item from another IO object.
+    def get(self, *args: Any, **kwargs: Any) -> Any:
+        """Gets an item using the getter function or method.
 
         Args:
-            *args: The arguments for getting the item.
-            **kwargs: The keyword arguments for getting the item.
+            *args: Variable length argument list for getting an item.
+            **kwargs: Arbitrary keyword arguments for getting an item.
 
         Returns:
-            The requested item.
+            The item returned by the getter function or method.
+
+        Raises:
+            AttributeError: If the getter function or method is not set.
         """
         try:
             return self.getter(*args, **kwargs)
@@ -77,14 +89,17 @@ class IOWrapper(BaseIO):
             raise AttributeError(f"{self} has no getter")
 
     async def get_async(self, *args: Any, **kwargs: Any) -> Any:
-        """Asynchronously gets the requested item from another IO object.
+        """Asynchronously gets an item using the getter_async function or method.
 
         Args:
-            *args: The arguments for getting the item.
-            **kwargs: The keyword arguments for getting the item.
+            *args: Variable length argument list for getting an item.
+            **kwargs: Arbitrary keyword arguments for getting an item.
 
         Returns:
-            The requested item.
+            The item returned by the getter_async function or method.
+
+        Raises:
+            AttributeError: If the getter_async function or method is not set.
         """
         try:
             return await self.getter_async(*args, **kwargs)
@@ -92,13 +107,19 @@ class IOWrapper(BaseIO):
             raise AttributeError(f"{self} has no getter_async")
 
     # Put
-    def put(self, value: Any, *args, **kwargs) -> Any:
-        """Puts the requested item into another IO object.
+    def put(self, value: Any, *args: Any, **kwargs: Any) -> Any:
+        """Puts an item using the putter function or method.
 
         Args:
             value: The value to put into this object.
-            *args: The arguments for putting the item.
-            **kwargs: The keyword arguments for putting the item.
+            *args: Variable length argument list for putting an item.
+            **kwargs: Arbitrary keyword arguments for putting an item.
+
+        Returns:
+            The result of the putter function or method.
+
+        Raises:
+            AttributeError: If the putter function or method is not set.
         """
         try:
             return self.putter(value, *args, **kwargs)
@@ -106,12 +127,18 @@ class IOWrapper(BaseIO):
             raise AttributeError(f"{self} has no putter")
 
     async def put_async(self, value: Any, *args: Any, **kwargs: Any) -> Any:
-        """Asynchronously puts the requested item into another IO object.
+        """Asynchronously puts an item using the putter function or method.
 
         Args:
-            value: The object to put into this object.
-            *args: The arguments for putting the item.
-            **kwargs: The keyword arguments for putting the item.
+            value: The value to put into this object.
+            *args: Variable length argument list for putting an item.
+            **kwargs: Arbitrary keyword arguments for putting an item.
+
+        Returns:
+            The result of the putter function or method.
+
+        Raises:
+            AttributeError: If the putter function or method is not set.
         """
         try:
             return await self.putter_async(value, *args, **kwargs)

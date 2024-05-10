@@ -1,8 +1,14 @@
 """ baseiomultiplexer.py
-An abstract class for IO Objects which use MethodMultiplexer for the get and put methods.
+BaseIOMultiplexer sets the get and put methods to be MethodMultiplexer objects which dispatches the get and put
+methods from collection of methods based on the selected method name. By default, the MethodMultiplexer uses its
+corresponding BaseIOMultiplexer instance as the source of the methods to dispatch.
+
+In the context of IO Objects, this means any BaseIOMultiplexer subclass will have get and put methods which can be
+changed to any method during runtime. This allows the subclasses to change how they route IO dynamically, either
+during construction or runtime.
 """
 # Package Header #
-from src.blockobjects.header import *
+from ...header import *
 
 # Header #
 __author__ = __author__
@@ -25,7 +31,15 @@ from .baseio import BaseIO
 # Definitions #
 # Classes #
 class BaseIOMultiplexer(BaseIO, CallableMultiplexObject):
-    """An abstract class for IO Objects which use MethodMultiplexer for the get and put methods.
+    """An abstract class for IO Objects which use MethodMultiplexer objects for the get and put methods.
+
+    BaseIOMultiplexer sets the get and put methods to be MethodMultiplexer objects which dispatches the get and put
+    methods from collection of methods based on the selected method name. By default, the MethodMultiplexer uses its
+    corresponding BaseIOMultiplexer instance as the source of the methods to dispatch.
+
+    In the context of IO Objects, this means any BaseIOMultiplexer subclass will have get and put methods which can be
+    changed to any method during runtime. This allows the subclasses to change how they route IO dynamically, either
+    during construction or runtime.
 
     Class Attributes:
         default_get: The default name of the method to use for getting.
@@ -36,8 +50,8 @@ class BaseIOMultiplexer(BaseIO, CallableMultiplexObject):
     Attributes:
         get: The method multiplexer which manages which get method to run when called.
         get_async: The method multiplexer which manages which asynchronous get method to run when called.
-        put_async: The method multiplexer which manages which asynchronous putt method to run when called.
         put: The method multiplexer which manages which put method to run when called.
+        put_async: The method multiplexer which manages which asynchronous put method to run when called.
 
     Args:
         *args: Arguments for inheritance.
