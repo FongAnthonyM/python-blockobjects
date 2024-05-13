@@ -218,7 +218,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             A dictionary of this object's attributes.
         """
         state = super().__getstate__()
-        for name in {"_will_proxy", "async_event_loop", "linked"}:
+        for name in {"async_event_loop", "linked"}:
             if name in state:
                 del state[name]
         return state
@@ -265,6 +265,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         if init_io and _state is None:
             self.construct_io()
+
+        if _state is not None and "_will_proxy" in _state:
+            del _state["_will_proxy"]
 
         if _state is None and (init_setup or (init_setup is None and self.init_setup)):
             self.setup(**({} if setup_kwargs is None else setup_kwargs))
@@ -406,16 +409,6 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 await self.outputs.update_server_io_async()
             self.sets_up_io = False
 
-    def finalize_io(self) -> None:
-        self.set_input_callback()
-        self.inputs.start_listeners()
-        self.outputs.start_listeners()
-
-    async def finalize_io_async(self) -> None:
-        await self.set_input_callback_async()
-        await self.inputs.start_listeners_async()
-        await self.outputs.start_listeners_async()
-
     def set_io_execution(self) -> None:
         match len(self.inputs):
             case 0:
@@ -485,6 +478,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
         method_async = BaseMethod(func=callback_async, instance=self._proxy if as_proxy else self)
         await self.inputs.set_callbacks_async(method, method_async)
+
+    def finalize_io(self) -> None:
+        self.set_input_callback()
+        self.inputs.start_listeners()
+        self.outputs.start_listeners()
+
+    async def finalize_io_async(self) -> None:
+        await self.set_input_callback_async()
+        await self.inputs.start_listeners_async()
+        await self.outputs.start_listeners_async()
 
     def one_output(self, output) -> tuple:
         """Formats an output if was the only output of the block."""
@@ -949,7 +952,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         # Use Correct Context
         if self.is_alive():
-            self._proxy.start_passive(None, s_kwargs)
+            self._proxy.start_passive(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
@@ -984,7 +987,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         # Use Correct Context
         if self.is_alive():
-            await self._proxy.start_passive_async(None, s_kwargs)
+            await self._proxy.start_passive_async(None, s_kwargs, False)
         else:
             await self._start_passive(s_kwargs)
 

@@ -156,6 +156,8 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
             A dictionary of this object's attributes.
         """
         state = super().__getstate__()
+        if "__context" not in state:
+            state["__context"] = self.__context
         return state
 
     # Instance Methods #

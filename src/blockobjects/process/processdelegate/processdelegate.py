@@ -120,6 +120,18 @@ class ProcessDelegate(ContextualObjectInterface):
         if init:
             self.construct(start_server=start_server, proxy_context=proxy_context, _state=_state)
 
+    # Pickling
+    def __getstate__(self) -> dict[str, Any]:
+        """Creates a dictionary of attributes which can be used to rebuild this object.
+
+        Returns:
+            A dictionary of this object's attributes.
+        """
+        state = super().__getstate__()
+        if "_proxy_context" not in state:
+            state["_proxy_context"] = self._proxy_context
+        return state
+
     # Instance Methods #
     # Constructors/Destructors
     def construct(
@@ -159,7 +171,7 @@ class ProcessDelegate(ContextualObjectInterface):
         Returns:
             True if this object is a proxy, False if this object is evaluating locally.
         """
-        return self._is_proxy
+        return self._is_proxy if getattr(self, "_proxy", None) is None else True
 
     def is_alive(self) -> bool:
         """Checks if the remote server is alive.
@@ -276,7 +288,7 @@ class ProcessDelegate(ContextualObjectInterface):
         Args:
             state: The attributes to build this object from.
         """
-        if self._is_proxy and (proxy := self._proxy) is not None and proxy._is_alive():
+        if (proxy := self._proxy) is not None and proxy._is_alive():
             proxy.set_state(state)
         else:
             raise RuntimeError("Sever process must be alive")
@@ -287,35 +299,29 @@ class ProcessDelegate(ContextualObjectInterface):
         Args:
             state: The attributes to build this object from.
         """
-        if self._is_proxy and (proxy := self._proxy) is not None and proxy._is_alive():
+        if (proxy := self._proxy) is not None and proxy._is_alive():
             await proxy.set_state_async(state)
         else:
             raise RuntimeError("Sever process must be alive")
 
     def update(self) -> None:
         """Builds the local object from state of the remote server object."""
-        if self._is_proxy:
-            if (proxy := self._proxy) is not None and proxy._is_alive():
-                self.__setstate__(proxy.get_state())
-            else:
-                raise RuntimeError("Remote process must be alive")
+        if (proxy := self._proxy) is not None and proxy._is_alive():
+            self.__setstate__(proxy.get_state())
 
     async def update_async(self) -> None:
         """Asynchronously builds the local object from state of the remote server object."""
-        if self._is_proxy:
-            if (proxy := self._proxy) is not None and proxy._is_alive():
-                self.__setstate__(await proxy.get_state_async())
-            else:
-                raise RuntimeError("Remote process must be alive")
+        if (proxy := self._proxy) is not None and proxy._is_alive():
+            self.__setstate__(await proxy.get_state_async())
 
     def update_server(self) -> None:
         """Builds the remote server object from state of the local object."""
-        if self._is_proxy:
+        if (proxy := self._proxy) is not None and proxy._is_alive():
             self.set_server_state(self._get_state())
 
     async def update_server_async(self) -> None:
         """Asynchronously builds the remote server object from state of the local object."""
-        if self._is_proxy:
+        if (proxy := self._proxy) is not None and proxy._is_alive():
             await self.set_server_state_async(self._get_state())
 
     # Server Management
@@ -426,7 +432,7 @@ class ProcessDelegate(ContextualObjectInterface):
         Returns:
             The context of this object.
         """
-        if self._is_proxy and (context := getattr(self._proxy, "_ContextualProxy__context", None)) is not None:
+        if self.is_proxy() and (context := getattr(self._proxy, "_ContextualProxy__context", None)) is not None:
             return context
         else:
             return self._proxy_context
@@ -440,7 +446,7 @@ class ProcessDelegate(ContextualObjectInterface):
         self._proxy_context = context
 
         # Create a new server and proxy
-        if self._is_proxy:
+        if self.is_proxy():
             self.update()  # Update local attributes
             # Set the proxy's context
             if (set_context := getattr(self._proxy, "_ContextualProxy__set_context", None)) is not None:

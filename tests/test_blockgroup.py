@@ -36,7 +36,7 @@ from src.rayblocks import RayContext
 
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("ray")
+# DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
 
 # Classes #
@@ -146,7 +146,7 @@ class TestBaseBlock(ClassTest):
         run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=True))
 
     def test_proxy_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("ray")
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=True))

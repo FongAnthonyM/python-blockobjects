@@ -21,6 +21,7 @@ from collections import deque
 from contextlib import contextmanager
 from functools import partial
 from time import perf_counter
+from types import MethodType
 from typing import ClassVar, Any
 from warnings import warn
 
@@ -263,6 +264,23 @@ class BlockGroup(BaseBlock):
     async def link_inner_io_async(self, *args: Any, **kwargs: Any) -> Any:
         return self.link_inner_io(*args, **kwargs)
 
+    def get_inner_io_id(self) -> dict[int, IORouter]:
+        io_ = {}
+        for block in self.blocks.values():
+            io_[block.inputs.get_id_number()] = block.inputs
+            io_[block.outputs.get_id_number()] = block.outputs
+        return io_
+
+    async def get_inner_io_id_async(self) -> dict[int, IORouter]:
+        coros = deque()
+        ids = deque()
+        for block in self.blocks.values():
+            coros.append(block.inputs.get_id_number_async())
+            ids.append(block.inputs)
+            coros.append(block.outputs.get_id_number_async())
+            ids.append(block.outputs)
+        return dict(zip(await gather(*coros), ids))
+
     def start_inner_inputs(self) -> None:
         for block in self.blocks.values():
             block.start_inputs()
@@ -298,19 +316,17 @@ class BlockGroup(BaseBlock):
     async def setup_inner_io_async(self) -> None:
         await gather(*(block.setup_io_async() for block in self.blocks.values()))
 
-    def _build_delegated_io(self,  io_router: IORouter) -> None:
-        for key, (source, other, destination) in io_router.links_to.items():
-            io_ = io_router[source]
-            if isinstance(io_, IORouter):
-                self._correct_input_links(io_)
-            else:
-                if not other.is_proxy() and not other.will_proxy:
-                    self.delegated_io[key] = io_
+    def _build_inner_delegated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
+        for key, other in io_router.get_links_to().items():
+            _, source, other_id, destination = key
+            other_io = io_router[source]
+            if (io_ := inner_io.get(other_id, None)) is not None and (not other.is_proxy() and not other.will_proxy):
+                self.delegated_io[key] = io_.create_io_wrapper(destination)
+            elif isinstance(other_io, IORouter):
+                self._build_inner_delegated_io(other_io, inner_io)
 
     def build_delegated_inputs(self) -> None:
-        if self.inputs.is_proxy():
-            self.inputs.update()
-        self._build_delegated_io(self.inputs)
+        self._build_inner_delegated_io(self.inputs, self.get_inner_io_id())
 
     def get_delegated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
         self.delegated_io[key].get(value, *args, **kwargs)
@@ -325,37 +341,37 @@ class BlockGroup(BaseBlock):
         await self.delegated_io[key].put_async(value, *args, **kwargs)
 
     def create_delegate_io_wrapper(self, key: tuple) -> IOWrapper:
-        get = self.get_delegated_io
-        get_async = self.get_delegated_io_async
-        put = self.put_delegated_io
-        put_async = self.put_delegated_io_async
-
         if self.is_alive():
-            get.__self__ = self._proxy
-            get_async.__self__ = self._proxy
-            put.__self__ = self._proxy
-            put_async.__self__ = self._proxy
-
-        getter = partial(get, key)
-        getter_async = partial(get_async, key)
-        putter = partial(put, key)
-        putter_async = partial(put_async, key)
+            getter = partial(MethodType(self.get_delegated_io.__func__, self._proxy), key)
+            getter_async = partial(MethodType(self.get_delegated_io_async.__func__, self._proxy), key)
+            putter = partial(MethodType(self.put_delegated_io.__func__, self._proxy), key)
+            putter_async = partial(MethodType(self.put_delegated_io_async.__func__, self._proxy), key)
+        else:
+            getter = partial(self.get_delegated_io, key)
+            getter_async = partial(self.get_delegated_io_async, key)
+            putter = partial(self.put_delegated_io, key)
+            putter_async = partial(self.put_delegated_io_async, key)
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
-    def _set_delegated_io_links(self, io_router: IORouter):
-        for key, (source, other, destination) in io_router.links_to.items():
-            io_ = io_router[source]
-            if isinstance(io_, IORouter):
-                self._set_delegated_io_links(io_)
-            else:
-                if not other.is_proxy() and not other.will_proxy:
-                    io_router[source] = self.create_delegate_io_wrapper(key)
+    def _set_delegated_io_links(
+        self,
+        io_router: IORouter,
+        inner_io: dict[int, IORouter],
+        top_io: IORouter,
+        keys: tuple[str, ...],
+    ) -> None:
+        for key, other in io_router.get_links_to().items():
+            _, source, other_id, destination = key
+            inner_keys = keys + (source,)
+            other_io = io_router[source]
+            if other_id in inner_io and (not other.is_proxy() and not other.will_proxy):
+                top_io.set_recursive(inner_keys, self.create_delegate_io_wrapper(key))
+            elif isinstance(other_io, IORouter):
+                self._set_delegated_io_links(other_io, inner_io, top_io, inner_keys)
 
     def set_delegated_input_links(self) -> None:
-        if self.inputs.is_proxy():
-            self.inputs.update()
-        self._set_delegated_io_links(self.inputs)
+        self._set_delegated_io_links(self.inputs, self.get_inner_io_id(), self.inputs, ())
 
     def correct_input_links(self, *args: Any, **kwargs: Any) -> None:
         self.build_delegated_inputs()
@@ -377,26 +393,36 @@ class BlockGroup(BaseBlock):
     def setup_io(self) -> None:
         if self.sets_up_io:
             if self.inputs.is_proxy():
-                self.inputs.update_server_io()
+                self.inputs.update()
             if self.outputs.is_proxy():
-                self.outputs.update_server_io()
+                self.outputs.update()
 
             self.link_inner_io()
             self.start_inner_io()
             self.setup_inner_io()
+
+            if self.inputs.is_proxy():
+                self.inputs.update_server_io()
+            if self.outputs.is_proxy():
+                self.outputs.update_server_io()
 
             self.sets_up_io = False
 
     async def setup_io_async(self) -> None:
         if self.sets_up_io:
             if self.inputs.is_proxy():
-                await self.inputs.update_server_io_async()
+                await self.inputs.update_async()
             if self.outputs.is_proxy():
-                await self.outputs.update_server_io_async()
+                await self.outputs.update_async()
 
             await self.link_inner_io_async()
             await self.start_inner_io_async()
             await self.setup_inner_io_async()
+
+            if self.inputs.is_proxy():
+                await self.inputs.update_server_io_async()
+            if self.outputs.is_proxy():
+                await self.outputs.update_server_io_async()
 
             self.sets_up_io = False
 
@@ -494,7 +520,7 @@ class BlockGroup(BaseBlock):
 
         # Use Correct Context
         if self.is_alive():
-            self._proxy.start_passive(None, s_kwargs)
+            self._proxy.start_passive(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
         else:
@@ -531,7 +557,7 @@ class BlockGroup(BaseBlock):
 
         # Use Correct Context
         if self.is_alive():
-            await self._proxy.start_passive_async(None, s_kwargs)
+            await self._proxy.start_passive_async(None, s_kwargs, False)
         else:
             await self._start_passive(s_kwargs)
 

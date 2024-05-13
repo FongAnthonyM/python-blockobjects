@@ -21,6 +21,7 @@ from functools import partial
 from itertools import chain
 from typing import ClassVar, Any
 from types import MethodType
+from uuid import uuid4
 from weakref import WeakKeyDictionary, WeakSet
 
 # Third-Party Packages #
@@ -82,11 +83,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     optional_defaults: dict[str, Any] = {}
 
     # Links
+    id_number: int
     create_link: MethodMultiplexer
     directly_linked: WeakSet
-    links_to: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
-    links_from: dict[tuple[int, int, int, int], tuple[str, "IORouter", str]]
-    endpoints: dict[tuple[int, int, int, int], tuple["IORouter", str, "IORouter", str]]
+    links_to: dict[tuple[int, str, int, str], "IORouter"]
+    links_from: dict[tuple[int, str, int, str], "IORouter"]
+    endpoints: dict[tuple[int, str, int, str], tuple["IORouter", str, "IORouter", str]]
     endpoint_tasks: set[Task]
 
     # Get/Put Tasks
@@ -99,8 +101,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # Listening
     _is_listening: bool = True
-    scheduled_listener_links: set[tuple[int, int, int, int]]
-    listeners: dict[tuple[int, int, int, int], Task]
+    scheduled_listener_links: set[tuple[int, str, int, str]]
+    listeners: dict[tuple[int, str, int, str], Task]
 
     # Callback
     callback: Callable[[Any], None]
@@ -122,6 +124,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         # Attributes #
         self.optional_defaults = self.optional_defaults.copy()
 
+        self.id_number = uuid4().int
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
         self.directly_linked = WeakSet()
         self.links_to = {}
@@ -220,6 +223,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         super().construct(*args, **kwargs)
 
     # State
+    def get_id_number(self) -> int:
+        return self.id_number
+
+    async def get_id_number_async(self) -> int:
+        return self.id_number
+
     def empty_io(self) -> dict[str, bool]:
         """Checks the IO objects in this object are empty.
 
@@ -352,22 +361,28 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
-    def get_deepest_io(self) -> dict:
-        return {k: (v.get_deepest_io() if isinstance(v, IORouter) else v) for k, v in self.data.items()}
+    def get_deepest(self) -> dict:
+        return {k: (v.get_deepest() if isinstance(v, IORouter) else v) for k, v in self.data.items()}
 
-    def set_deepest_io(self, io_: dict[str, BaseIO | None]) -> None:
+    def set_deepest(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
             if isinstance(v, dict):
-                self.data[k].set_deepest_io(v)
+                self.data[k].set_deepest(v)
             else:
                 self.data[k] = v
 
-    async def set_deepest_io_async(self, io_: dict[str, BaseIO | None]) -> None:
+    async def set_deepest_async(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
             if isinstance(v, dict):
-                self.data[k].set_deepest_io(v)
+                self.data[k].set_deepest(v)
             else:
                 self.data[k] = v
+
+    def set_recursive(self, keys: tuple[str, ...], io_: BaseIO) -> None:
+        if len(keys) == 1:
+            self.data[keys[0]] = io_
+        else:
+            self.data[keys[0]].set_recursive_io(keys[1:], io_)
 
     # Linking
     def create_link_none(self, *args: Any, **kwargs: Any) -> None:
@@ -387,9 +402,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        key = (id(self), id(source), id(other), id(destination))
-        self.links_to[key] = (source, other, destination)
-        other.links_from[key] = (destination, self, source)
+        key = (self.id_number, source, other.id_number, destination)
+        self.links_to[key] = other
+        other.links_from[key] = self
         if self.is_listen_link(self, other):
             other.scheduled_listener_links.add(key)
             if destination is None:
@@ -408,9 +423,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        key = (id(other), id(source), id(self), id(destination))
-        other.links_to[key] = (source, self, destination)
-        self.links_from[key] = (destination, other, source)
+        key = (other.id_number, source, self.id_number, destination)
+        other.links_to[key] = self
+        self.links_from[key] = other
         if self.is_listen_link(other, self):
             self.scheduled_listener_links.add(key)
             if destination is None:
@@ -420,6 +435,18 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 other.data[source] = self
             elif (d_io := self.create_link(destination, *args, **kwargs)) is not None:
                 other.data[source] = d_io
+
+    def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_from
+
+    async def get_links_from_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_from
+
+    def get_links_to(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_to
+
+    async def get_links_to_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_to
 
     def get_links(self) -> dict[str, IOMap] | None:
         """Gets the links of this IO object.
@@ -442,7 +469,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                     memo.add(next_io)
                     next_io.get_link_endpoints(endpoints)
         else:
-            for k, (n, next_io, d) in self.links_to.items():
+            for k, next_io in self.links_to.items():
+                _, n, _, d = k
                 if self.is_endpoint_link(self, next_io):
                     endpoints[k] = (self, n, next_io, d)
                 elif self not in memo:
@@ -644,7 +672,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     def get_link_id(
         self,
-        key: tuple[int, int, int, int],
+        key: tuple[int, str, int, str],
         required: Iterable[str] | None = None,
         default: Any = search_sentinel,
         defaults: dict[str, Any] | None = None,
@@ -659,7 +687,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        name, io_, origin = self.links_from[key]
+        _, origin, _, name = key
+        io_ = self.links_from[key]
         value = io_.get() if origin is None else io_.get_item(origin)
         self.data[name].put(value, *args, **kwargs)
         required = set((self.required or self.order) if required is None else required)
@@ -683,7 +712,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     async def get_link_id_async(
         self,
-        key: tuple[int, int, int, int],
+        key: tuple[int, str, int, str],
         required: Iterable[str] | None = None,
         default: Any = search_sentinel,
         defaults: dict[str, Any] | None = None,
@@ -698,7 +727,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        name, io_, origin = self.links_from[key]
+        _, origin, _, name = key
+        io_ = self.links_from[key]
         # Get as a task
         task = create_task(io_.get_async() if origin is None else io_.get_item_async(origin))
         self.get_tasks.add(task)
@@ -983,7 +1013,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.cancel_callbacks()
 
     # Listening
-    async def listen_link_async(self, key: tuple[int, int, int, int], *args, **kwargs) -> None:
+    async def listen_link_async(self, key: tuple[int, str, int, str], *args, **kwargs) -> None:
         """Put an item into an IO object.
 
         Args:
@@ -992,14 +1022,15 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        name, io_, origin = self.links_from[key]
+        _, origin, _, name = key
+        io_ = self.links_from[key]
         get_method = io_.get_async if origin is None else partial(io_.get_item_async, origin)
 
         while self._is_listening:
             await self.data[name].put_async(await get_method())
             await self.schedule_callback_async()
 
-    def _remove_listener(self, task: Task, key: tuple[int, int, int, int]) -> None:
+    def _remove_listener(self, task: Task, key: tuple[int, str, int, str]) -> None:
         del self.listeners[key]
 
     def start_listeners(self) -> None:
