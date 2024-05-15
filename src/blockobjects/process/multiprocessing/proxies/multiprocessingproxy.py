@@ -14,9 +14,14 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from collections.abc import Iterable, Generator
+from functools import partialmethod
+import multiprocessing
 from multiprocessing import util, process
-from multiprocessing.managers import (BaseProxy, RebuildProxy, dispatch,
+from multiprocessing.connection import address_type, Connection
+from multiprocessing.managers import (BaseProxy, dispatch, RemoteError,
                                       convert_to_error, listener_client, get_spawning_popen, State)
+import os
+import socket
 import threading
 from typing import Any, ClassVar
 
@@ -26,11 +31,24 @@ from baseobjects.operations import iter_public_method_names
 
 # Local Packages #
 from ...context import ProxyInterface
+try:
+    import numpy
+except ModuleNotFoundError:
+    NUMPY_EXISTS = False
+else:
+    NUMPY_EXISTS = True
+    from ...sharedmemory.sharedarray import DEFAULT_ARRAY_REDUCER
 
 
 # Definitions #
 # Classes #
 class MultiprocessingProxy(BaseProxy, ProxyInterface):
+
+    # Static Methods #
+    @staticmethod
+    def _call_inner_method(obj, name, *args, **kwargs):
+        """Evaluates the wrapped object's method."""
+        return obj._callmethod(name, args, kwargs)
 
     # Class Attributes #
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
@@ -60,12 +78,7 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
         Returns:
             The function for a method.
         """
-
-        def func_(obj, *args, **kwargs):
-            """Evaluates the wrapped object's method."""
-            return obj._callmethod(name, args, kwargs)
-
-        return func_
+        return partialmethod(cls._call_inner_method, name)
 
     @classmethod
     def create_proxy_type(cls, name: str, exposed: Iterable[str]) -> type:
@@ -149,33 +162,42 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
         raise convert_to_error(kind, item)
 
-    def _callmethod(self, methodname, args=(), kwds={}):
-        try:
-            conn = self._tls.connection
-        except AttributeError:
-            util.debug('thread %r does not own a connection', threading.current_thread().name)
-            self._connect()
-            conn = self._tls.connection
+    if NUMPY_EXISTS:
+        def _callmethod(self, methodname, args=(), kwds={}):
+            try:
+                conn = self._tls.connection
+            except AttributeError:
+                util.debug('thread %r does not own a connection', threading.current_thread().name)
+                self._connect()
+                conn = self._tls.connection
 
-        conn.send((self._id, methodname, args, kwds))
-        return self._parse_result(conn.recv())
+            with DEFAULT_ARRAY_REDUCER.persist():
+                conn.send((self._id, methodname, args, kwds))
+                return self._parse_result(conn.recv())
+
+    else:
+        def _callmethod(self, methodname, args=(), kwds={}):
+            try:
+                conn = self._tls.connection
+            except AttributeError:
+                util.debug('thread %r does not own a connection', threading.current_thread().name)
+                self._connect()
+                conn = self._tls.connection
+
+            conn.send((self._id, methodname, args, kwds))
+            return self._parse_result(conn.recv())
 
     def _delref(self, auto_shutdown: bool = True) -> None:
         # check whether manager is still alive
-        state = self._manager._state
-        if state is None or state.value == State.STARTED:
-            # tell manager this process no longer cares about referent
-            try:
-                util.debug('DELREF %r', self._token.id)
-                conn = self._Client(self._token.address, authkey=self._authkey)
-                dispatch(conn, None, 'delref', (self._token.id,))
-            except Exception as e:
-                util.debug('... delref failed %s', e)
-            else:
-                if auto_shutdown and self._manager._number_of_objects() == 0:
-                    self._manager.shutdown()
-        else:
-            util.debug('DELREF %r -- manager already shutdown', self._token.id)
+        try:
+            util.debug('DELREF %r', self._token.id)
+            conn = self._Client(self._token.address, authkey=self._authkey)
+            dispatch(conn, None, 'delref', (self._token.id,))
+        except Exception as e:
+            util.debug('DELREF %r -- proxy already shutdown', self._token.id)
+
+        if auto_shutdown and self._manager is not None and self._manager._number_of_objects() == 0:
+            self._manager.shutdown()
 
         # check whether we can close this thread's connection because
         # the process owns no more references to objects for this manager
@@ -190,6 +212,49 @@ class MultiprocessingProxy(BaseProxy, ProxyInterface):
 
 
 # Functions #
+def SocketClient(address):
+    """Establishes a socket connection to the given address.
+
+    This function is intend to override python's implementation of SocketClient, because the original implementation
+    does not handle race conditions.
+
+    When a race condition occurs the connection is refused. This implementation will keep trying to connect until a
+    stable connection is established. Once connected, it detaches the socket and returns a Connection object.
+
+    Args:
+        address: The address to connect to. The address type is determined by the address_type function.
+
+    Returns:
+        Connection: A multiprocessing Connection object that represents the socket connection.
+
+    Raises:
+        ConnectionRefusedError: The function will catch this exception and keep trying to connect.
+    """
+    family = address_type(address)
+    with socket.socket(getattr(socket, family)) as s:
+        s.setblocking(True)
+        while True:
+            try:
+                s.connect(address)
+                return Connection(s.detach())
+            except ConnectionRefusedError:
+                pass
+
+
+def RebuildProxy(func, token, serializer, kwds):
+    server = getattr(process.current_process(), '_manager_server', None)
+    if server and server.address == token.address:
+        util.debug('Rebuild a proxy owned by manager, token=%r', token)
+        kwds['manager_owned'] = True
+        if token.id not in server.id_to_local_proxy_obj:
+            server.id_to_local_proxy_obj[token.id] = server.id_to_obj[token.id]
+    incref = kwds.pop('incref', True) and not getattr(process.current_process(), '_inheriting', False)
+    try:
+        return func(token, serializer, incref=incref, **kwds)
+    except RemoteError as e:
+        return None
+
+
 def MakeMultiprocessingProxyType(name, exposed, _cache={}) -> type:
     exposed = tuple(exposed)
     try:
@@ -231,4 +296,8 @@ def AutoMultiprocessingProxy(token, serializer, manager=None, authkey=None, expo
     proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref, manager_owned=manager_owned)
     proxy._isauto = True
     return proxy
+
+
+# Overrides #
+multiprocessing.connection.SocketClient = SocketClient
 

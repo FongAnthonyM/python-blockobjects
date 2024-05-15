@@ -15,8 +15,10 @@ __email__ = __email__
 # Standard Libraries #
 from asyncio import AbstractEventLoop, iscoroutine, run_coroutine_threadsafe, get_event_loop
 from concurrent.futures import Future
-from multiprocessing import util
-from multiprocessing.managers import SharedMemoryServer, Token
+from multiprocessing import util, process
+from multiprocessing.managers import SharedMemoryServer, _SharedMemoryTracker, Token, listener_client
+import os
+from os import getpid
 import sys
 import threading
 from time import sleep
@@ -33,12 +35,33 @@ from ..futures import PipeFuture
 class MultiprocessingAsyncServer(SharedMemoryServer):
     public = SharedMemoryServer.public + ['delref']
 
-    def __init__(self, *args, **kwargs):
-        SharedMemoryServer.__init__(self, *args, **kwargs)
+    def __init__(self, registry, address, authkey, serializer):
+        if not isinstance(authkey, bytes):
+            raise TypeError(
+                "Authkey {0!r} is type {1!s}, not bytes".format(
+                    authkey, type(authkey)))
+        self.registry = registry
+        self.authkey = process.AuthenticationString(authkey)
+        Listener, Client = listener_client[serializer]
+
+        # do authentication later
+        self.listener = Listener(address=address, backlog=1024)
+        self.address = self.listener.address
+
+        self.id_to_obj = {'0': (None, ())}
+        self.id_to_refcount = {}
+        self.id_to_local_proxy_obj = {}
+        self.mutex = threading.Lock()
+        address = self.address
+        # The address of Linux abstract namespaces can be bytes
+        if isinstance(address, bytes):
+            address = os.fsdecode(address)
+        self.shared_memory_context = _SharedMemoryTracker(f"shm_{address}_{getpid()}")
+        util.debug(f"SharedMemoryServer started by pid {getpid()}")
         self._loop = get_event_loop()
-        thread = threading.Thread(target=self.run_event_loop, args=(self._loop,))
-        thread.daemon = True
-        thread.start()
+        self.async_thread = threading.Thread(target=self.run_event_loop, args=(self._loop,))
+        self.async_thread.daemon = True
+        self.async_thread.start()
 
     def run_event_loop(self, loop: AbstractEventLoop):
         """ Run asyncio event loop """
@@ -57,6 +80,20 @@ class MultiprocessingAsyncServer(SharedMemoryServer):
             else:
                 msg = ('#RETURN', res)
         c_future.set_result(msg)
+
+    def handle_request(self, conn):
+        '''
+        Handle a new connection
+        '''
+        try:
+            self._handle_request(conn)
+        except SystemExit:
+            # Server.serve_client() calls sys.exit(0) on EOF
+            pass
+        except Exception as e:
+            print(e)
+        finally:
+            conn.close()
 
     def serve_client(self, conn):
         util.debug('starting server thread to service %r', threading.current_thread().name)

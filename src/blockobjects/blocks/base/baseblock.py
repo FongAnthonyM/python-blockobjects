@@ -886,7 +886,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.is_alive() and server:
             if update:
                 self.join_execution()
-            self._stop_server(update)
+            self._stop_server(update, {"inputs", "outputs"})
 
     async def stop_async(self, server: bool = True, update: bool = True) -> None:
         """Asynchronously Stops the execution of this block, optionally stopping the server relative to this object.
@@ -900,7 +900,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.is_alive() and server:
             if update:
                 await self.join_execution_async()
-            self._stop_server(update)
+            self._stop_server(update, {"inputs", "outputs"})
 
     # Start Passive
     async def _start_passive(self, s_kwargs: dict[str, Any] | None = None) -> None:
@@ -1016,6 +1016,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         """
         await self._stop_passive(t_kwargs)
         await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
+        await gather(*(self.inputs.stop_server_async(update=False), self.outputs.stop_server_async(update=False)))
 
     def stop_passive(self, t_kwargs: dict[str, Any] | None = None, server: bool = True, update: bool = True) -> None:
         """Stops the execution of this block, optionally stopping the server relative to this object.

@@ -79,14 +79,8 @@ class IOWrapper(BaseIO):
 
         Returns:
             The item returned by the getter function or method.
-
-        Raises:
-            AttributeError: If the getter function or method is not set.
         """
-        try:
-            return self.getter(*args, **kwargs)
-        except AttributeError:
-            raise AttributeError(f"{self} has no getter")
+        return self.getter(*args, **kwargs)
 
     async def get_async(self, *args: Any, **kwargs: Any) -> Any:
         """Asynchronously gets an item using the getter_async function or method.
@@ -97,14 +91,8 @@ class IOWrapper(BaseIO):
 
         Returns:
             The item returned by the getter_async function or method.
-
-        Raises:
-            AttributeError: If the getter_async function or method is not set.
         """
-        try:
-            return await self.getter_async(*args, **kwargs)
-        except AttributeError:
-            raise AttributeError(f"{self} has no getter_async")
+        return await self.getter_async(*args, **kwargs)
 
     # Put
     def put(self, value: Any, *args: Any, **kwargs: Any) -> Any:
@@ -117,14 +105,8 @@ class IOWrapper(BaseIO):
 
         Returns:
             The result of the putter function or method.
-
-        Raises:
-            AttributeError: If the putter function or method is not set.
         """
-        try:
-            return self.putter(value, *args, **kwargs)
-        except AttributeError:
-            raise AttributeError(f"{self} has no putter")
+        return self.putter(value, *args, **kwargs)
 
     async def put_async(self, value: Any, *args: Any, **kwargs: Any) -> Any:
         """Asynchronously puts an item using the putter function or method.
@@ -136,11 +118,5 @@ class IOWrapper(BaseIO):
 
         Returns:
             The result of the putter function or method.
-
-        Raises:
-            AttributeError: If the putter function or method is not set.
         """
-        try:
-            return await self.putter_async(value, *args, **kwargs)
-        except AttributeError:
-            raise AttributeError(f"{self} has no putter_async")
+        return await self.putter_async(value, *args, **kwargs)

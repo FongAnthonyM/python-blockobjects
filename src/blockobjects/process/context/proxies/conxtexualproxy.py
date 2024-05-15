@@ -14,6 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from collections.abc import Iterable, Generator
+from functools import partialmethod
 from typing import Any, ClassVar
 
 # Third-Party Packages #
@@ -30,10 +31,16 @@ from ..interfaces import ProxyInterface
 # Classes #
 def rebuild_proxy(cls, name, proxy, exposed, context):
     ProxyType = cls.create_proxy_type(name, exposed)
-    return ProxyType(proxy, context=context)
+    return None if proxy is None else ProxyType(proxy, context=context)
 
 
 class ContextualProxy(ContextualObjectInterface, ProxyInterface):
+
+    # Static Methods #
+    @staticmethod
+    def _call_inner_method(obj, name, *args, **kwargs):
+        """Evaluates the wrapped object's method."""
+        return getattr(obj._proxy, name)(*args, **kwargs)
 
     # Class Attributes #
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
@@ -63,11 +70,7 @@ class ContextualProxy(ContextualObjectInterface, ProxyInterface):
         Returns:
             The function for a method.
         """
-        def func_(obj, *args, **kwargs):
-            """Evaluates the wrapped object's method."""
-            return getattr(obj._proxy, name)(*args, **kwargs)
-
-        return func_
+        return partialmethod(cls._call_inner_method, name)
 
     @classmethod
     def create_proxy_type(cls, name: str, exposed: Iterable[str]) -> type:

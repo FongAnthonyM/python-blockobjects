@@ -15,6 +15,7 @@ __email__ = __email__
 # Standard Libraries #
 from asyncio import iscoroutinefunction, wrap_future
 from collections.abc import Iterable, Generator
+from functools import partialmethod
 from typing import Any, ClassVar
 
 # Third-Party Packages #
@@ -31,6 +32,18 @@ from ray.actor import ActorClass, ActorHandle
 # Definitions #
 # Classes #
 class RayProxy(ProxyInterface):
+
+    # Static Methods #
+    @staticmethod
+    def _call_inner_method(obj, name, *args, **kwargs):
+        """Evaluates the wrapped object's method."""
+        return getattr(obj._actor, name).remote(*args, **kwargs)
+
+    @staticmethod
+    def _call_inner_method_get(obj, name, *args, **kwargs):
+        """Evaluates the wrapped object's method."""
+        return get(getattr(obj._actor, name).remote(*args, **kwargs))
+
     # Class Attributes #
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}
     _exposed_: ClassVar[set] = set()
@@ -58,17 +71,7 @@ class RayProxy(ProxyInterface):
         Returns:
             The function for a method.
         """
-        if is_coro:
-            def func_(obj, *args, **kwargs):
-                """Evaluates the wrapped object's method."""
-                return getattr(obj._actor, name).remote(*args, **kwargs)
-        else:
-            def func_(obj, *args, **kwargs) -> Any:
-                """Evaluates the wrapped object's method."""
-                print(f"{obj}.{name}")
-                return get(getattr(obj._actor, name).remote(*args, **kwargs))
-
-        return func_
+        return partialmethod(cls._call_inner_method if is_coro else cls._call_inner_method_get, name)
 
     @classmethod
     def create_proxy_type(cls, target_cls: type, name: str, exposed: Iterable[str]) -> type:

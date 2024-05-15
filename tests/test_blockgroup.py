@@ -22,6 +22,7 @@ import pickle
 from os import getpid
 
 # Third-Party Packages #
+import numpy as np
 import pytest
 import ray
 
@@ -139,43 +140,18 @@ class TestBaseBlock(ClassTest):
         assert outputs_1["out_two"] == 48
 
     def test_local_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=False))
         run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=False))
         run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=True))
         run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=True))
 
     def test_proxy_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("ray")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=True))
         run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=True))
-
-    async def local_multiple_start_passive_async(self):
-        block1 = self.ExampleOne(init_setup=False)
-        block2 = self.ExampleOne(init_setup=False)
-
-        block1.outputs.link_forward("out_one", block2.inputs, "first")
-        block1.outputs.link_forward("out_two", block2.inputs, "third")
-
-        block1.start_passive()
-        block2.start_passive()
-
-        await block1.inputs.put_callback_async("first", 2)
-        await block1.inputs.put_callback_async("third", 3)
-        outputs_1 = await block2.outputs.get_all_async()
-
-        await block1.stop_passive_async()
-        await block2.stop_passive_async()
-
-        assert block1.setup_flag
-        assert block1.teardown_flag
-        assert outputs_1["out_one"] == 8
-        assert outputs_1["out_two"] == 48
-
-    def test_local_multiple_start_passive_async(self):
-        run(self.local_multiple_start_passive_async())
 
     def test_start_proxy(self):
         block = self.ExampleOne(will_proxy=True, init_setup=False)

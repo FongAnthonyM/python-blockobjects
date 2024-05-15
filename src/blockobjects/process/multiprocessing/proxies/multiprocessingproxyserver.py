@@ -13,6 +13,7 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+import multiprocessing
 from multiprocessing import util, ProcessError, connection
 from multiprocessing.managers import SharedMemoryManager, Token, dispatch, State, convert_to_error
 import signal

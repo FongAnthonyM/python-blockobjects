@@ -384,6 +384,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         else:
             self.data[keys[0]].set_recursive_io(keys[1:], io_)
 
+    async def set_recursive_async(self, keys: tuple[str, ...], io_: BaseIO) -> None:
+        if len(keys) == 1:
+            self.data[keys[0]] = io_
+        else:
+            await self.data[keys[0]].set_recursive_io_async(keys[1:], io_)
+
     # Linking
     def create_link_none(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -631,7 +637,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The requested item.
         """
-        return self.data[name].get(name=name, **kwargs)
+        return self.data[name].get(**kwargs)
 
     async def get_item_async(self, name: str, **kwargs: Any) -> Any:
         """Asynchronously gets an item from the requested IO object.
@@ -643,7 +649,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The requested item.
         """
-        task = create_task(self.data[name].get_async(name=name, **kwargs))
+        task = create_task(self.data[name].get_async(**kwargs))
         self.get_tasks.add(task)
         task.add_done_callback(self.get_tasks.discard)
         return await task
@@ -780,7 +786,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
-        return dict(zip(self.data.keys(), await gather(*tasks)))
+        d = dict(zip(self.data.keys(), await gather(*tasks)))
+        return d
 
     def get_required(
         self,
