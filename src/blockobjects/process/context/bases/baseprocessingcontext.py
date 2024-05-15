@@ -1,8 +1,8 @@
 """ baseprocessingcontext.py
- multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
+A multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
 """
 # Package Header #
-from src.blockobjects.header import *
+from ....header import *
 
 # Header #
 __author__ = __author__
@@ -20,15 +20,13 @@ from weakref import ref
 from baseobjects import BaseObject
 
 # Local Packages #
-from src.blockobjects.process.context.interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
+from ...interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
 
 
 # Definitions #
 # Classes #
 class BaseProcessingContext(BaseObject):
     """A multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
-
-    Class Attributes:
 
     Attributes:
         object_categories: The names of the types of objects that will be managed this context.
@@ -41,7 +39,6 @@ class BaseProcessingContext(BaseObject):
     Args:
         init: Determines if this object will construct.
     """
-    # Class Attributes #
 
     # Attributes #
     object_categories: tuple[str] = ("locks", "events", "queues", "simple_queues", "proxies")
@@ -72,7 +69,7 @@ class BaseProcessingContext(BaseObject):
         Returns:
             A dictionary of this object's attributes.
         """
-        state = self.__dict__.copy()
+        state = super().__getstate__()
         state["object_register"] = tuple(k for k in self.object_register.keys())
         return state
 
@@ -83,12 +80,12 @@ class BaseProcessingContext(BaseObject):
             state: The attributes to build this object from.
         """
         object_categories = state.pop("object_register")
-        self.__dict__.update(state)
+        super().__setstate__(state)
         self.object_register = {n: {} for n in object_categories}
 
     # Instance Methods #
     # Context Objects
-    def create_lock(self, name=None, *args, cls=None, **kwargs) -> LockInterface:
+    def create_lock(self, name: str | None = None, *args: Any, cls: type | None = None, **kwargs: Any) -> LockInterface:
         """Creates and adds a lock to the context's object register.
 
         Args:
@@ -106,7 +103,13 @@ class BaseProcessingContext(BaseObject):
         self.object_register["locks"][(str(id(lock)) if name is None else name)] = ref(lock)
         return lock
 
-    def require_lock(self, name, *args, cls=None, **kwargs) -> LockInterface:
+    def require_lock(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> LockInterface:
         """Gets a lock if it exists otherwise it creates and adds a lock to the context's object register.
 
         Args:
@@ -122,7 +125,7 @@ class BaseProcessingContext(BaseObject):
             lock = self.create_lock(name, *args, cls=cls, **kwargs)
         return lock
 
-    def register_lock(self, lock: LockInterface, name=None) -> None:
+    def register_lock(self, lock: LockInterface, name: str | None = None) -> None:
         """Adds a lock to the context's object register.
 
         Args:
@@ -131,7 +134,13 @@ class BaseProcessingContext(BaseObject):
         """
         self.object_register["locks"][(str(id(lock)) if name is None else name)] = ref(lock)
 
-    def create_event(self, name=None, *args, cls=None, **kwargs) -> EventInterface:
+    def create_event(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> EventInterface:
         """Creates and adds an event to the context's object register.
 
         Args:
@@ -149,7 +158,13 @@ class BaseProcessingContext(BaseObject):
         self.object_register["events"][(str(id(event)) if name is None else name)] = ref(event)
         return event
 
-    def require_event(self, name, *args, cls=None, **kwargs) -> EventInterface:
+    def require_event(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> EventInterface:
         """Gets an event if it exists otherwise it creates and adds an event to the context's object register.
 
         Args:
@@ -165,7 +180,7 @@ class BaseProcessingContext(BaseObject):
             event = self.create_event(name, *args, cls=cls, **kwargs)
         return event
 
-    def register_event(self, event: EventInterface, name=None) -> None:
+    def register_event(self, event: EventInterface, name: str | None = None) -> None:
         """Adds an event to the context's object register.
 
         Args:
@@ -174,7 +189,13 @@ class BaseProcessingContext(BaseObject):
         """
         self.object_register["events"][(str(id(event)) if name is None else name)] = ref(event)
 
-    def create_queue(self, name=None, *args, cls=None, **kwargs) -> QueueInterface:
+    def create_queue(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> QueueInterface:
         """Creates and adds a queue to the context's object register.
 
         Args:
@@ -192,7 +213,13 @@ class BaseProcessingContext(BaseObject):
         self.object_register["queues"][(str(id(queue)) if name is None else name)] = ref(queue)
         return queue
 
-    def require_queue(self, name, *args, cls=None, **kwargs) -> QueueInterface:
+    def require_queue(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> QueueInterface:
         """Gets a queue if it exists otherwise it creates and adds a queue to the context's object register.
 
         Args:
@@ -208,7 +235,7 @@ class BaseProcessingContext(BaseObject):
             queue = self.create_queue(name, *args, cls=cls, **kwargs)
         return queue
 
-    def register_queue(self, queue: QueueInterface, name=None) -> None:
+    def register_queue(self, queue: QueueInterface, name: str | None = None) -> None:
         """Adds a queue to the context's object register.
 
         Args:
@@ -217,7 +244,13 @@ class BaseProcessingContext(BaseObject):
         """
         self.object_register["queues"][(str(id(queue)) if name is None else name)] = ref(queue)
 
-    def create_simple_queue(self, name=None, *args, cls=None, **kwargs) -> QueueInterface:
+    def create_simple_queue(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> QueueInterface:
         """Creates and adds a simple queue to the context's object register.
 
         Args:
@@ -235,7 +268,13 @@ class BaseProcessingContext(BaseObject):
         self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = ref(queue)
         return queue
 
-    def require_simple_queue(self, name, *args, cls=None, **kwargs) -> QueueInterface:
+    def require_simple_queue(
+        self,
+        name: str | None = None,
+        *args: Any,
+        cls: type | None = None,
+        **kwargs: Any,
+    ) -> QueueInterface:
         """Gets a simple queue if it exists otherwise it creates and adds a simple queue to the context's object register.
 
         Args:
@@ -251,7 +290,7 @@ class BaseProcessingContext(BaseObject):
             queue = self.create_simple_queue(name, *args, cls=cls, **kwargs)
         return queue
 
-    def register_simple_queue(self, queue: QueueInterface, name=None) -> None:
+    def register_simple_queue(self, queue: QueueInterface, name: str | None = None) -> None:
         """Adds a simple queue to the context's object register.
 
         Args:
@@ -314,7 +353,7 @@ class BaseProcessingContext(BaseObject):
             proxy = self.create_proxy(name, cls, args, kwargs, *_args, **_kwargs)
         return proxy
 
-    def register_proxy(self, proxy: ProxyInterface, name=None) -> None:
+    def register_proxy(self, proxy: ProxyInterface, name: str | None = None) -> None:
         """Adds a proxy to the context's object register.
 
         Args:

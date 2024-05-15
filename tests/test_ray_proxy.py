@@ -15,22 +15,19 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import sleep, run
-import pickle
-from os import getpid
 
 # Third-Party Packages #
 import pytest
 
 # Local Packages #
-from src.rayblocks.context import RayContext
+from src.blockobjects.process.ray import context
 from .test_proxy import BaseProxyTest
 
 
 # Definitions #
 # Classes #
 class TestRayProxy(BaseProxyTest):
-    context_type = RayContext
+    context_type = context
 
 
 # Main #

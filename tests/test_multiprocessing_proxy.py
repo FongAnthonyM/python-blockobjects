@@ -23,7 +23,7 @@ from os import getpid
 import pytest
 
 # Local Packages #
-from src.blockobjects.process.multiprocessing import MultiProcessingContext
+from src.blockobjects.process.context.multiprocessingcontext import MultiProcessingContext
 from .test_proxy import BaseProxyTest
 
 

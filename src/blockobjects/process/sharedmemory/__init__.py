@@ -17,6 +17,7 @@ from .sharedmemoryregister import SharedMemoryRegister, PROCESS_SHARED_MEMORY_RE
 from .sharedmemory import SharedMemory
 from .lockedsharedmemory import LockedSharedMemory
 
+# Optional Modules #
 try:
     import numpy
 except ModuleNotFoundError:

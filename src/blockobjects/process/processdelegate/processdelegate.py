@@ -21,7 +21,8 @@ from baseobjects import search_sentinel
 from baseobjects.operations import iter_public_method_names
 
 # Local Packages #
-from ..context import BaseProcessingContext, ContextualObjectInterface, ProxyInterface
+from ..interfaces import ProxyInterface, ContextualObjectInterface
+from ..context import BaseProcessingContext
 from .delegatemethod import delegatemethod
 
 

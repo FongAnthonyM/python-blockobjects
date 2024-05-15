@@ -17,14 +17,12 @@ __email__ = __email__
 # Standard Libraries #
 import abc
 from asyncio import sleep, run
-import copy
 import cProfile
 import pathlib
 import io
 import pstats
 from pstats import Stats, f8, func_std_string
 import timeit
-import time
 from typing import Any
 
 # Third-Party Packages #
@@ -32,14 +30,10 @@ import pytest
 
 # Local Packages #
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
-from src.blockobjects.process.context import ManagerContext
-from src.blockobjects.process.multiprocessing import MultiProcessingContext
-from src.blockobjects.process.processdelegate import ProcessDelegate
 from src.blockobjects.blocks import BaseBlock
-from src.rayblocks import RayContext
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
 
 
 # Functions #
@@ -305,7 +299,7 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_start_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start()
 
@@ -324,7 +318,7 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_start_passive_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start_passive()
 
@@ -345,7 +339,7 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_multiple_start_passive_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         block1 = self.ExampleOne(will_proxy=True, init_setup=False)
         block2 = self.ExampleOne(will_proxy=True, init_setup=False)
 

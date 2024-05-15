@@ -19,7 +19,6 @@ __email__ = __email__
 # Third-Party Packages #
 
 # Local Packages #
-
 from ...process import ContextualSimpleQueue
 from ..base import BaseIO
 

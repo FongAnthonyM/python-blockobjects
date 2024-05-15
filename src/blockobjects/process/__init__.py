@@ -13,14 +13,10 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
+from .interfaces import *
 from .context import *
-from .asynccontext import *
-from .multiprocessing import *
 from .processdelegate import *
 
 
 # Defaults #
-DEFAULT_PROCESS_CONTEXT = ManagerContext()
-DEFAULT_PROCESS_CONTEXT.select_context("async")
-BaseContextualObject._context = DEFAULT_PROCESS_CONTEXT
 ProcessDelegate._proxy_context = DEFAULT_PROCESS_CONTEXT

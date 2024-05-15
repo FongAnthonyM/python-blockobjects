@@ -25,14 +25,14 @@ import pytest
 # Local Packages #
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
 from src.blockobjects.process.context import ManagerContext
-from src.blockobjects.process.multiprocessing import MultiProcessingContext
+from src.blockobjects.process.context.multiprocessingcontext import MultiProcessingContext
 from src.blockobjects.io import IORouter
 from .test_bases import ClassTest
 
 
 # Definitions #
 if DEFAULT_PROCESS_CONTEXT.context is None:
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
 
 
 # Classes #

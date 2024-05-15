@@ -17,23 +17,14 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import sleep, run
-import pickle
-from os import getpid
+from asyncio import run
 
 # Third-Party Packages #
-import numpy as np
-import pytest
-import ray
 
 # Local Packages #
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
-from src.blockobjects.process.context import ManagerContext
-from src.blockobjects.process.multiprocessing import MultiProcessingContext
-from src.blockobjects.process.processdelegate import ProcessDelegate
 from src.blockobjects.blocks import BaseBlock, BlockGroup
 from tests.test_bases import ClassTest
-from src.rayblocks import RayContext
 
 
 # Definitions #
@@ -140,14 +131,14 @@ class TestBaseBlock(ClassTest):
         assert outputs_1["out_two"] == 48
 
     def test_local_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=False))
         run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=False))
         run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=True))
         run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=True))
 
     def test_proxy_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=False))
         run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=True))
@@ -171,7 +162,7 @@ class TestBaseBlock(ClassTest):
         assert block.teardown_flag
 
     def test_start_passive_proxy(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
         group = GroupOne(init_setup=False)
         group.start_passive()
 
