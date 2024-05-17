@@ -17,7 +17,7 @@ from collections.abc import Iterable, Callable
 from typing import ClassVar, Any
 
 # Third-Party Packages #
-from src.blockobjects.process import BaseProcessingContext, AsyncContext, ManagerContext, DEFAULT_PROCESS_CONTEXT
+from ...process import BaseProcessingContext, AsyncContext, ManagerContext, DEFAULT_PROCESS_CONTEXT
 
 # Local Packages #
 from ..base import IOMap, BaseIO, BaseIOMultiplexer, IODelegator, IOWrapper

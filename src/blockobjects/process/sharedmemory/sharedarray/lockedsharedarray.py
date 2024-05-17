@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 # Local Packages #
-from src.blockobjects.process.interfaces import LockInterface
+from ...interfaces import LockInterface
 from ..lockedsharedmemory import LockedSharedMemory
 from .sharedarray import SharedArray
 

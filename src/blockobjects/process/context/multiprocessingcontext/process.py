@@ -2,7 +2,7 @@
 A wrapper for a multiprocessing Process which mimics multiple run functionality.
 """
 # Package Header #
-from src.blockobjects.header import *
+from ....header import *
 
 # Header #
 __author__ = __author__

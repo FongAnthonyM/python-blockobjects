@@ -21,7 +21,7 @@ from weakref import ref
 
 # Third-Party Packages #
 from baseobjects import BaseMethod
-from src.blockobjects.process import ProcessDelegate, delegatemethod
+from ...process import ProcessDelegate, delegatemethod
 
 # Local Packages #
 from .contextualiomanager import ContextualIOManager
