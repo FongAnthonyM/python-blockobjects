@@ -981,7 +981,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        await gather(*(io_object.put(value, *args, **kwargs) for io_object in self.data.values()))
+        await gather(*(io_object.put_async(value, *args, **kwargs) for io_object in self.data.values()))
 
     def put_break_sentinel(self, *args, **kwargs: Any) -> None:
         """Puts the break sentinel to all IO objects.
@@ -1002,7 +1002,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        await gather(*(io_object.put(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
+        await gather(*(io_object.put_async(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
 
     # Tasks
     def cancel_tasks(self) -> None:

@@ -166,4 +166,4 @@ class MultiProcessingContext(BaseProcessingContext):
 
 
 # Assignment #
-ManagerContext.contexts["multiprocessingcontext"] = MultiProcessingContext()
+ManagerContext.contexts["multiprocessing"] = MultiProcessingContext()

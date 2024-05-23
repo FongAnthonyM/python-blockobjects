@@ -32,7 +32,7 @@ from .test_bases import ClassTest
 
 # Definitions #
 if DEFAULT_PROCESS_CONTEXT.context is None:
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
 
 # Classes #

@@ -113,36 +113,36 @@ class GroupOne(BlockGroup):
 
 class TestBaseBlock(ClassTest):
 
-    async def start_passive_async(self, group_proxy: bool, inner_one: bool, inner_two: bool):
+    async def start_async(self, group_proxy: bool, inner_one: bool, inner_two: bool):
         block = GroupOne(
             will_proxy=group_proxy,
             init_setup=False,
             create_kwargs={"first_proxy": inner_one, "second_proxy": inner_two},
         )
-        await block.start_passive_async()
+        await block.start_async()
 
         await block.inputs.put_item_async("one", 2)
         await block.inputs.put_item_async("two", 3)
         outputs_1 = await block.outputs.get_all_async()
 
-        await block.stop_passive_async()
+        await block.stop_async()
 
         assert outputs_1["out_one"] == 8
         assert outputs_1["out_two"] == 48
 
-    def test_local_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
-        run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=False))
-        run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=False))
-        run(self.start_passive_async(group_proxy=False, inner_one=False, inner_two=True))
-        run(self.start_passive_async(group_proxy=False, inner_one=True, inner_two=True))
+    def test_local_start_async(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        run(self.start_async(group_proxy=False, inner_one=False, inner_two=False))
+        run(self.start_async(group_proxy=False, inner_one=True, inner_two=False))
+        run(self.start_async(group_proxy=False, inner_one=False, inner_two=True))
+        run(self.start_async(group_proxy=False, inner_one=True, inner_two=True))
 
-    def test_proxy_start_passive_async(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
-        run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=False))
-        run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=False))
-        run(self.start_passive_async(group_proxy=True, inner_one=False, inner_two=True))
-        run(self.start_passive_async(group_proxy=True, inner_one=True, inner_two=True))
+    def test_proxy_start_async(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+        run(self.start_async(group_proxy=True, inner_one=False, inner_two=False))
+        run(self.start_async(group_proxy=True, inner_one=True, inner_two=False))
+        run(self.start_async(group_proxy=True, inner_one=False, inner_two=True))
+        run(self.start_async(group_proxy=True, inner_one=True, inner_two=True))
 
     def test_start_proxy(self):
         block = self.ExampleOne(will_proxy=True, init_setup=False)
@@ -161,22 +161,22 @@ class TestBaseBlock(ClassTest):
         assert block.setup_flag
         assert block.teardown_flag
 
-    def test_start_passive_proxy(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+    def test_start_proxy(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         group = GroupOne(init_setup=False)
-        group.start_passive()
+        group.start()
 
         group.inputs.put_callback("one", 2)
         group.inputs.put_callback("two", 3)
 
         outputs_1 = group.outputs.get_all()
 
-        group.stop_passive()
+        group.stop()
 
         assert outputs_1["out_one"] == 8
         assert outputs_1["out_two"] == 48
 
-    def test_multiple_start_passive_proxy(self):
+    def test_multiple_start_proxy(self):
         DEFAULT_PROCESS_CONTEXT.select_context("ray")
         block1 = self.ExampleOne(will_proxy=True, init_setup=False)
         block2 = self.ExampleOne(will_proxy=True, init_setup=False)
@@ -191,16 +191,16 @@ class TestBaseBlock(ClassTest):
 
         block1.outputs.update_server_io()
 
-        block1.start_passive()
-        block2.start_passive()
+        block1.start()
+        block2.start()
 
         block1.inputs.put_callback("first", 2)
         block1.inputs.put_callback("third", 3)
 
         outputs_1 = block2.outputs.get_all()
 
-        block1.stop_passive()
-        block2.stop_passive()
+        block1.stop()
+        block2.stop()
 
         assert outputs_1["out_one"] == 8
         assert outputs_1["out_two"] == 48
@@ -212,4 +212,4 @@ class TestBaseBlock(ClassTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_proxy_start_passive_async()
+    t.test_proxy_start_async()

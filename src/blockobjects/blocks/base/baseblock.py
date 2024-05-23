@@ -80,17 +80,14 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         "is_loop_event",
         "set_loop_event",
         "clear_loop_event",
-        "_execute_output_only",
-        "_execute_output_only_async",
         "run",
         "start",
-        "start_passive",
-        "stop_passive_server",
-        "stop_passive",
-        "stop_passive_async",
+        "stop_server",
+        "stop",
+        "stop_async",
         "join_execution_async",
     }
-    local_methods: ClassVar[set] = {"stop_passive", "stop_passive_async"}
+    local_methods: ClassVar[set] = {"stop", "stop_async"}
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...]] = ()
@@ -107,6 +104,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     # State
     _loop_event: bool = False
     _will_proxy: bool = False
+    will_produce: bool = False
     _is_executing: bool = False
     _executing_waiters: deque[Future]
 
@@ -117,8 +115,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     format_output: MethodMultiplexer
 
-    input_callback_method: str = "_execute_output_only"
-    input_callback_method_async: str = "_execute_output_only_async"
+    input_callback_method: str = "_produce"
+    input_callback_method_async: str = "_produce_async"
 
     # Setup/Evaluate/Teardown
     sets_up: bool = True
@@ -136,6 +134,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     execute_input_async: MethodMultiplexer
     execute_output: MethodMultiplexer
     execute_output_async: MethodMultiplexer
+
+    _production_task: Task | None = None
 
     futures: list[Future]
 
@@ -159,12 +159,17 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self.inputs.will_proxy = value
         self.outputs.will_proxy = value
 
+    @property
+    def is_producing(self) -> bool:
+        return self._production_task is not None
+
     # Magic Methods #
     # Construction/Destruction
     def __init__(
         self,
         *args: Any,
         will_proxy: bool | None = None,
+        will_produce: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -201,6 +206,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             self.construct(
                 *args,
                 will_proxy=will_proxy,
+                will_produce=will_produce,
                 init_io=init_io,
                 init_setup=init_setup,
                 setup_kwargs=setup_kwargs,
@@ -238,6 +244,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self,
         *args: Any,
         will_proxy: bool | None = None,
+        will_produce: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -260,6 +267,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if will_proxy is not None:
             self.will_proxy = will_proxy
 
+        if will_produce is not None:
+            self.will_produce = will_produce
+
         if setup_kwargs is not None:
             self.setup_kwargs.update(setup_kwargs)
 
@@ -276,7 +286,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         super().construct(*args, start_server=start_server, proxy_context=proxy_context, _state=_state, **kwargs)
 
         if _state is not None:
-            self.set_io_execution()
+            self.set_execution_io()
 
     # State
     def is_executing(self) -> bool:
@@ -347,7 +357,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self.inputs.required = self.default_required_input
         self.inputs.optional_defaults.update(self.default_optional_input)
 
-        self.set_io_execution()
+        self.set_execution_io()
 
     def start_inputs(self) -> None:
         if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
@@ -408,29 +418,6 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             if self.outputs.is_proxy():
                 await self.outputs.update_server_io_async()
             self.sets_up_io = False
-
-    def set_io_execution(self) -> None:
-        match len(self.inputs):
-            case 0:
-                self.execute_input.select("_execute_no_input")
-                self.execute_input_async.select("_execute_no_input_async")
-            case _:
-                self.execute_input.select("_execute_input")
-                self.execute_input_async.select("_execute_input_async")
-
-        match len(self.outputs.order):
-            case 0:
-                self.execute_output.select("_execute_no_output")
-                self.execute_output_async.select("_execute_no_output_async")
-                self.format_output.select("multiple_outputs")
-            case 1:
-                self.execute_output.select("_execute_one_output")
-                self.execute_output_async.select("_execute_one_output_async")
-                self.format_output.select("one_output")
-            case _:
-                self.execute_output.select("_execute_multiple_outputs")
-                self.execute_output_async.select("_execute_multiple_outputs_async")
-                self.format_output.select("multiple_outputs")
 
     def set_input_callback(
         self,
@@ -529,6 +516,69 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         else:
             return self.evaluate(*args, **(self.teardown_kwargs | kwargs))
 
+    # Set Execution
+    def set_execution_io(self) -> None:
+        match len(self.inputs):
+            case 0:
+                self.execute_input.select("_execute_no_input")
+                self.execute_input_async.select("_execute_no_input_async")
+            case _:
+                self.execute_input.select("_execute_input")
+                self.execute_input_async.select("_execute_input_async")
+
+        match len(self.outputs.order):
+            case 0:
+                self.execute_output.select("_execute_no_output")
+                self.execute_output_async.select("_execute_no_output_async")
+                self.format_output.select("multiple_outputs")
+            case 1:
+                self.execute_output.select("_execute_one_output")
+                self.execute_output_async.select("_execute_one_output_async")
+                self.format_output.select("one_output")
+            case _:
+                self.execute_output.select("_execute_multiple_outputs")
+                self.execute_output_async.select("_execute_multiple_outputs_async")
+                self.format_output.select("multiple_outputs")
+
+    def set_execution_input_only(self) -> None:
+        match len(self.inputs):
+            case 0:
+                self.execute_input.select("_execute_no_input")
+                self.execute_input_async.select("_execute_no_input_async")
+            case _:
+                self.execute_input.select("_execute_input")
+                self.execute_input_async.select("_execute_input_async")
+
+        self.execute_output.select("_execute_no_output")
+        self.execute_output_async.select("_execute_no_output_async")
+        self.format_output.select("multiple_outputs")
+
+    def set_execution_output_only(self) -> None:
+        self.execute_input.select("_execute_no_input")
+        self.execute_input_async.select("_execute_no_input_async")
+
+        match len(self.outputs.order):
+            case 0:
+                self.execute_output.select("_execute_no_output")
+                self.execute_output_async.select("_execute_no_output_async")
+                self.format_output.select("multiple_outputs")
+            case 1:
+                self.execute_output.select("_execute_one_output")
+                self.execute_output_async.select("_execute_one_output_async")
+                self.format_output.select("one_output")
+            case _:
+                self.execute_output.select("_execute_multiple_outputs")
+                self.execute_output_async.select("_execute_multiple_outputs_async")
+                self.format_output.select("multiple_outputs")
+
+    def set_execution_no_io(self) -> None:
+        self.execute_input.select("_execute_no_input")
+        self.execute_input_async.select("_execute_no_input_async")
+
+        self.execute_output.select("_execute_no_output")
+        self.execute_output_async.select("_execute_no_output_async")
+        self.format_output.select("multiple_outputs")
+
     # Execute Input
     def _execute_no_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {}
@@ -579,7 +629,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     def execute(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            self._execute(*args, **kwargs)
+            self._full_execute(*args, **kwargs)
 
     async def _execute_async(self, *args: Any, **kwargs: Any) -> None:
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
@@ -587,39 +637,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     async def execute_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            await self._execute_async(*args, **kwargs)
-
-    def _execute_put_required(self, name: str, value: Any, *args: Any, **kwargs: Any) -> bool:
-        if evaluated := self.inputs.put_cache_required(name, value, *args, **kwargs):
-            self.execute_output(self.evaluate(**self.inputs.required_cache.get()))
-        return evaluated
-
-    def execute_put_required(self, name: str, value: Any, *args: Any, **kwargs: Any) -> bool:
-        with self._executing_context_manager():
-            return self._execute_put_required(name, value, *args, **kwargs)
-
-    def _execute_output_only(self, *args: Any, **kwargs: Any) -> None:
-        self.execute_output(self.evaluate(*args, **kwargs))
-
-    def execute_output_only(self, *args: Any, **kwargs: Any) -> None:
-        with self._executing_context_manager():
-            self._execute_output_only(*args, **kwargs)
-
-    async def _execute_output_only_async(self, *args: Any, **kwargs: Any) -> None:
-        await self.execute_output_async(await self.evaluate_async(*args, **kwargs))
-
-    async def execute_output_only_async(self, *args: Any, **kwargs: Any) -> None:
-        with self._executing_context_manager():
-            await self._execute_output_only_async(*args, **kwargs)
-
-    async def _execute_put_required_async(self, name: str, value: Any, *args: Any, **kwargs: Any) -> bool:
-        if evaluated := await self.inputs.put_cache_required_async(name, value, *args, **kwargs):
-            t = create_task(self._execute_output_only_async(**await self.inputs.required_cache.get_async()))
-        return evaluated
-
-    async def execute_put_required_async(self, name: str, value: Any, *args: Any, **kwargs: Any) -> bool:
-        with self._executing_context_manager():
-            return await self._execute_put_required_async(name, value, *args, **kwargs)
+            await self._full_execute_async(*args, **kwargs)
 
     # Execute Loop
     def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
@@ -655,6 +673,38 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             # Outputs
             await create_task(self.execute_output_async(output))
 
+    # Produce
+    def _produce(self, *args: Any, **kwargs: Any) -> None:
+        self.execute_output(self.evaluate(*args, **kwargs))
+
+    def produce(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            self._full_execute(*args, **kwargs)
+
+    async def _produce_async(self, *args: Any, **kwargs: Any) -> None:
+        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+        await self.execute_output_async(await evaluate_method(*args, **kwargs))
+
+    async def produce_async(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            await self._full_execute_async(*args, **kwargs)
+
+    # Production Loop
+    def _production_loop(self, *args: Any, **kwargs: Any) -> None:
+        while self._loop_event:
+            # Evaluate and Output
+            self.execute_output(self.evaluate(*args, **kwargs))
+
+    async def _production_loop_async(self, *args: Any, **kwargs: Any) -> None:
+        """An async loop that executes evaluate consecutively and outputs until an event stops it."""
+        # Get the correct method
+        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+
+        # Loop the evaluation
+        while self._loop_event:
+            # Evaluate and Outputs
+            await create_task(self.execute_output_async(await create_task(evaluate_method(*args, **kwargs))))
+
     # Teardown
     def teardown(self, *args: Any, **kwargs: Any) -> None:
         """A method for tearing down the object."""
@@ -688,7 +738,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 await self.setup_async(**(s_kwargs or {}))
 
             # Run one Execution
-            await self._execute_async(**(e_kwargs or {}))
+            await self._full_execute_async(**(e_kwargs or {}))
 
             # Optionally Teardown
             if self.tears_down:
@@ -769,141 +819,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         else:
             await self._run(s_kwargs, e_kwargs, t_kwargs)
 
-    # Start Block Continuous
-    async def _start(
-        self,
-        s_kwargs: dict[str, Any] | None = None,
-        e_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Starts the continuous execution of the block.
-
-        Args:
-            s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
-            t_kwargs: The keyword arguments for block teardown.
-        """
-        # Flag On
-        with self._executing_context_manager():
-            self._loop_event = True
-
-            # Optionally Setup
-            if self.sets_up:
-                await self.setup_async(**(s_kwargs or {}))
-
-            # Loop TaskBlock
-            await self._execution_loop_async(**(e_kwargs or {}))
-
-            # Optionally Teardown
-            if self.tears_down:
-                await self.teardown_async(**(t_kwargs or {}))
-
-            # Wait for any remaining Futures
-            for future in self.futures:
-                await future
-
-    def _start_async_loop(
-        self,
-        s_kwargs: dict[str, Any] | None = None,
-        e_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Starts the continuous execution of the block in an async run.
-
-        Args:
-            s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
-            t_kwargs: The keyword arguments for block teardown.
-        """
-        run(self._start(s_kwargs, e_kwargs, t_kwargs))
-
-    def start(
-        self,
-        as_proxy: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        e_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Starts the continuous execution of the block, delegating to another process if selected.
-
-        Args:
-            as_proxy: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
-            t_kwargs: The keyword arguments for block teardown.
-        """
-        # Raise Error if the task is already running.
-        if self.is_executing():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Run as Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy):
-            if not self.is_alive():
-                self._start_server()
-            self._proxy.start(None, s_kwargs, e_kwargs, t_kwargs)
-        elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._start(s_kwargs, e_kwargs, t_kwargs), loop)
-        else:
-            self._start_async_loop(s_kwargs, e_kwargs, t_kwargs)
-
-    async def start_async(
-        self,
-        as_proxy: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        e_kwargs: dict[str, Any] | None = None,
-        t_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
-
-        Args:
-            as_proxy: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
-            t_kwargs: The keyword arguments for block teardown.
-        """
-        # Raise Error if the task is already running.
-        if self.is_executing():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Use Correct Context
-        if as_proxy or (as_proxy is None and self.will_proxy):
-            if not self.is_alive():
-                self._start_server()
-            await self._proxy.start_async(None, s_kwargs, e_kwargs, t_kwargs)
-        else:
-            await self._start(s_kwargs, e_kwargs, t_kwargs)
-
-    # Stop Block Continuous Execution
-    def stop(self, server: bool = True, update: bool = True) -> None:
-        """Stops the execution of this block, optionally stopping the server relative to this object.
-
-        Args:
-            server: Determines if the remote server should be stopped.
-            update: Determines if this object should be updated from the server before stopping.
-        """
-        self.clear_loop_event()
-        self.inputs.put_break_sentinel()
-        if self.is_alive() and server:
-            if update:
-                self.join_execution()
-            self._stop_server(update, {"inputs", "outputs"})
-
-    async def stop_async(self, server: bool = True, update: bool = True) -> None:
-        """Asynchronously Stops the execution of this block, optionally stopping the server relative to this object.
-
-        Args:
-            server: Determines if the remote server should be stopped.
-            update: Determines if this object should be updated from the server before stopping.
-        """
-        self.clear_loop_event()
-        await self.inputs.put_break_sentinel_async()
-        if self.is_alive() and server:
-            if update:
-                await self.join_execution_async()
-            self._stop_server(update, {"inputs", "outputs"})
-
-    # Start Passive
-    async def _start_passive(self, s_kwargs: dict[str, Any] | None = None) -> None:
+    # Start Block
+    async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
         Args:
@@ -915,15 +832,19 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.sets_up:
             await self.setup_async(**(s_kwargs or {}))
 
-    def _start_passive_async_loop(self, s_kwargs: dict[str, Any] | None = None) -> None:
+        if self.will_produce:
+            self.set_loop_event()
+            self._production_task = create_task(self._production_loop_async())
+
+    def _start_async_loop(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block in an async run.
 
         Args:
             s_kwargs: The keyword arguments for block setup.
         """
-        run(self._start_passive(s_kwargs))
+        run(self._start_async(s_kwargs))
 
-    def start_passive(
+    def start(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
@@ -954,11 +875,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         if self.is_alive():
             self._proxy.start_passive(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
+            run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
         else:
-            self._start_passive_async_loop(s_kwargs)
+            self._start_async_loop(s_kwargs)
 
-    async def start_passive_async(
+    async def start_async(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
@@ -987,17 +908,23 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         # Use Correct Context
         if self.is_alive():
-            await self._proxy.start_passive_async(None, s_kwargs, False)
+            await self._proxy.start_async(None, s_kwargs, False)
         else:
-            await self._start_passive(s_kwargs)
+            await self._start_async(s_kwargs)
 
-    # Stop Block Passive Execution
-    async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:
+    # Stop Block
+    async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
         Args:
             t_kwargs: The keyword arguments for block teardown.
         """
+        # Stop Production Task
+        if self._production_task is not None:
+            self.clear_loop_event()
+            await self._production_task
+            self._production_task = None
+
         # Optionally Teardown
         if self.tears_down:
             await self.teardown_async(**(t_kwargs or {}))
@@ -1008,17 +935,17 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         self._clear_executing()
 
-    async def stop_passive_server(self, t_kwargs: dict[str, Any] | None = None) -> None:
+    async def stop_server_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
         Args:
             t_kwargs: The keyword arguments for block teardown.
         """
-        await self._stop_passive(t_kwargs)
+        await self._stop_async(t_kwargs)
         await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
         await gather(*(self.inputs.stop_server_async(update=False), self.outputs.stop_server_async(update=False)))
 
-    def stop_passive(self, t_kwargs: dict[str, Any] | None = None, server: bool = True, update: bool = True) -> None:
+    def stop(self, t_kwargs: dict[str, Any] | None = None, server: bool = True, update: bool = True) -> None:
         """Stops the execution of this block, optionally stopping the server relative to this object.
 
         Args:
@@ -1026,20 +953,20 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            self._proxy.stop_passive_server(t_kwargs)
+            self._proxy.stop_server(t_kwargs)
             if update:
                 self.join_execution()
             self._stop_server(update)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._stop_passive(t_kwargs), loop)
+            run_coroutine_threadsafe(self._stop_async(t_kwargs), loop)
             self.inputs.stop()
             self.outputs.stop()
         else:
-            run(self._stop_passive(t_kwargs))
+            run(self._stop_async(t_kwargs))
             self.inputs.stop()
             self.outputs.stop()
 
-    async def stop_passive_async(
+    async def stop_async(
         self,
         t_kwargs: dict[str, Any] | None = None,
         server: bool = True,
@@ -1052,12 +979,12 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            await self._proxy.stop_passive_server(t_kwargs)
+            await self._proxy.stop_server_async(t_kwargs)
             if update:
                 await self.join_execution_async()
             await self._stop_server_async(update)
         else:
-            await self._stop_passive(t_kwargs)
+            await self._stop_async(t_kwargs)
             await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     # Join Execution

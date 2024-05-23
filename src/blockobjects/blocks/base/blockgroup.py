@@ -108,6 +108,7 @@ class BlockGroup(BaseBlock):
         blocks: Mapping[str, BaseBlock] | None = None,
         *args: Any,
         will_proxy: bool | None = None,
+        will_produce: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -137,6 +138,7 @@ class BlockGroup(BaseBlock):
                 blocks,
                 *args,
                 will_proxy=will_proxy,
+                will_produce=will_produce,
                 init_io=init_io,
                 init_setup=init_setup,
                 setup_kwargs=setup_kwargs,
@@ -156,6 +158,7 @@ class BlockGroup(BaseBlock):
         blocks: Mapping[str, BaseBlock] | None = None,
         *args: Any,
         will_proxy: bool | None = None,
+        will_produce: bool | None = None,
         init_io: bool = True,
         init_setup: bool | None = None,
         setup_kwargs: dict[str, Any] | None = None,
@@ -253,7 +256,7 @@ class BlockGroup(BaseBlock):
                 block.outputs.start_server()
 
         for block in self.blocks.values():
-            block.start_passive()
+            block.start()
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
@@ -537,10 +540,10 @@ class BlockGroup(BaseBlock):
     def execute_all(self) -> None:
         """Executes all operation within this operation group."""
         for block in self.blocks.values():
-            block.execute()
+            block.full_execute()
 
     # Start Passive
-    async def _start_passive(self, s_kwargs: dict[str, Any] | None = None) -> None:
+    async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
         Args:
@@ -553,9 +556,9 @@ class BlockGroup(BaseBlock):
             await self.setup_async(**(s_kwargs or {}))
 
         # Start Inner Blocks
-        await gather(*(block.start_passive_async() for block in self.blocks.values()))
+        await gather(*(block.start_async() for block in self.blocks.values()))
 
-    def start_passive(
+    def start(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
@@ -588,11 +591,11 @@ class BlockGroup(BaseBlock):
         if self.is_alive():
             self._proxy.start_passive(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._start_passive(s_kwargs), loop)
+            run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
         else:
-            self._start_passive_async_loop(s_kwargs)
+            self._start_async_loop(s_kwargs)
 
-    async def start_passive_async(
+    async def start_async(
         self,
         as_proxy: bool | None = None,
         s_kwargs: dict[str, Any] | None = None,
@@ -623,19 +626,19 @@ class BlockGroup(BaseBlock):
 
         # Use Correct Context
         if self.is_alive():
-            await self._proxy.start_passive_async(None, s_kwargs, False)
+            await self._proxy.start_async(None, s_kwargs, False)
         else:
-            await self._start_passive(s_kwargs)
+            await self._start_async(s_kwargs)
 
     # Stop Block Passive Execution
-    async def _stop_passive(self, t_kwargs: dict[str, Any] | None = None) -> None:
+    async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
         Args:
             t_kwargs: The keyword arguments for block teardown.
         """
         # Stop Inner Blocks
-        await gather(*(block.stop_passive_async() for block in self.blocks.values()))
+        await gather(*(block.stop_async() for block in self.blocks.values()))
 
         # Optionally Teardown
         if self.tears_down:

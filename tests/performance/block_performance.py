@@ -33,7 +33,7 @@ from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
 from src.blockobjects.blocks import BaseBlock
 
 # Definitions #
-DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
 
 # Functions #
@@ -154,7 +154,7 @@ class TestBaseBlock(PerformanceTest):
         pr = cProfile.Profile()
         pr.enable()
 
-        block.execute()
+        block.full_execute()
 
         pr.disable()
         s = io.StringIO()
@@ -169,7 +169,7 @@ class TestBaseBlock(PerformanceTest):
         block = self.ExampleOne()
         block.start_server()
         block.inputs.put_all(first=2, third=3)
-        block.execute()
+        block.full_execute()
         outputs = block.outputs.get_all()
         block.stop_server()
         assert outputs["out_one"] == 4
@@ -228,9 +228,9 @@ class TestBaseBlock(PerformanceTest):
     def test_local_start_async(self):
         run(self.local_start_async())
 
-    async def local_start_passive_async_profile(self):
+    async def local_start_async_profile(self):
         block = self.ExampleOne(init_setup=False)
-        block.start_passive()
+        block.start()
 
         pr = cProfile.Profile()
         pr.enable()
@@ -241,7 +241,7 @@ class TestBaseBlock(PerformanceTest):
 
         pr.disable()
 
-        await block.stop_passive_async()
+        await block.stop_async()
 
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
@@ -249,18 +249,18 @@ class TestBaseBlock(PerformanceTest):
         ps.print_stats()
         print(s.getvalue())
 
-    def test_local_start_passive_async_profile(self):
-        run(self.local_start_passive_async_profile())
+    def test_local_start_async_profile(self):
+        run(self.local_start_async_profile())
 
-    async def local_multiple_start_passive_async_profile(self):
+    async def local_multiple_start_async_profile(self):
         block1 = self.ExampleOne(init_setup=False)
         block2 = self.ExampleOne(init_setup=False)
 
         block1.outputs.link_forward("out_one", block2.inputs, "first")
         block1.outputs.link_forward("out_two", block2.inputs, "third")
 
-        block1.start_passive()
-        block2.start_passive()
+        block1.start()
+        block2.start()
 
         pr = cProfile.Profile()
         pr.enable()
@@ -271,8 +271,8 @@ class TestBaseBlock(PerformanceTest):
 
         pr.disable()
 
-        await block1.stop_passive_async()
-        await block2.stop_passive_async()
+        await block1.stop_async()
+        await block2.stop_async()
 
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
@@ -280,8 +280,8 @@ class TestBaseBlock(PerformanceTest):
         ps.print_stats()
         print(s.getvalue())
 
-    def test_local_multiple_start_passive_async_profile(self):
-        run(self.local_multiple_start_passive_async_profile())
+    def test_local_multiple_start_async_profile(self):
+        run(self.local_multiple_start_async_profile())
 
     def test_io_evaluate_profile(self):
         block = self.ExampleOne(init_setup=False)
@@ -299,7 +299,7 @@ class TestBaseBlock(PerformanceTest):
         print(s.getvalue())
 
     def test_io_start_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
         block.start()
 
@@ -310,17 +310,17 @@ class TestBaseBlock(PerformanceTest):
         outputs_1 = block.outputs.get_all()
 
         pr.disable()
-        block.stop_passive()
+        block.stop()
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
         ps = StatsMicro(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print(s.getvalue())
 
-    def test_io_start_passive_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+    def test_io_start_profile(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block = self.ExampleOne(will_proxy=True, init_setup=False)
-        block.start_passive()
+        block.start()
 
         pr = cProfile.Profile()
         pr.enable()
@@ -331,15 +331,15 @@ class TestBaseBlock(PerformanceTest):
         outputs_1 = block.outputs.get_all()
 
         pr.disable()
-        block.stop_passive()
+        block.stop()
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
         ps = StatsMicro(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print(s.getvalue())
 
-    def test_io_multiple_start_passive_profile(self):
-        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessingcontext")
+    def test_io_multiple_start_profile(self):
+        DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
         block1 = self.ExampleOne(will_proxy=True, init_setup=False)
         block2 = self.ExampleOne(will_proxy=True, init_setup=False)
 
@@ -353,8 +353,8 @@ class TestBaseBlock(PerformanceTest):
 
         block1.outputs.update_server_io()
 
-        block1.start_passive()
-        block2.start_passive()
+        block1.start()
+        block2.start()
 
         pr = cProfile.Profile()
         pr.enable()
@@ -364,8 +364,8 @@ class TestBaseBlock(PerformanceTest):
         outputs_1 = block2.outputs.get_all()
 
         pr.disable()
-        block1.stop_passive()
-        block2.stop_passive()
+        block1.stop()
+        block2.stop()
         s = io.StringIO()
         sortby = pstats.SortKey.TIME
         ps = StatsMicro(pr, stream=s).sort_stats(sortby)
@@ -377,4 +377,4 @@ class TestBaseBlock(PerformanceTest):
 if __name__ == "__main__":
     # pytest.main(["-v", "-s"])
     t = TestBaseBlock()
-    t.test_io_start_passive_profile()
+    t.test_io_start_profile()
