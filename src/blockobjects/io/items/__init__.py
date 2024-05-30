@@ -2,7 +2,7 @@
 
 """
 # Package Header #
-from ..header import *
+from ...header import *
 
 # Header #
 __author__ = __author__
@@ -13,8 +13,4 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
-from .base import *
-from .containers import *
-from .routers import *
-from .managers import *
-from .items import *
+from .identifieditem import IdentifiedItem

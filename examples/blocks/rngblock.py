@@ -14,6 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from typing import ClassVar, Any
+from uuid import uuid4
 
 # Third-Party Packages #
 from blockobjects import BaseBlock
@@ -77,6 +78,16 @@ class RNGBlock(BaseBlock):
         # Construct #
         if init:
             self.construct(*args, **kwargs)
+
+    # IO
+    def format_output(
+        self,
+        outputs: Any,
+        ids: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        return self._format_output(outputs, ids=(uuid4().bytes,), *args, **kwargs)
 
     # Evaluate
     def evaluate(self, *args, **kwargs: Any) -> Any:

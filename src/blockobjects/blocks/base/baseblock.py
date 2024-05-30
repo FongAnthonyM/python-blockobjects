@@ -19,8 +19,10 @@ from abc import abstractmethod
 from collections.abc import Iterable
 from collections import deque
 from contextlib import contextmanager
+from itertools import chain
 from time import perf_counter
 from typing import ClassVar, Any
+from uuid import uuid4
 from warnings import warn
 
 # Third-Party Packages #
@@ -30,7 +32,7 @@ from ...process import ProcessDelegate, delegatemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import DelegatingIOManager
+from ...io import DelegatingIOManager, IdentifiedItem
 
 
 # Definitions #
@@ -113,7 +115,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     inputs: DelegatingIOManager
     outputs: DelegatingIOManager
 
-    format_output: MethodMultiplexer
+    no_output_sentinel: Any = None
 
     input_callback_method: str = "_produce"
     input_callback_method_async: str = "_produce_async"
@@ -130,10 +132,10 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     _evaluate: MethodMultiplexer
     _teardown: MethodMultiplexer
 
-    execute_input: MethodMultiplexer
-    execute_input_async: MethodMultiplexer
-    execute_output: MethodMultiplexer
-    execute_output_async: MethodMultiplexer
+    get_input: MethodMultiplexer
+    get_input_async: MethodMultiplexer
+    put_output: MethodMultiplexer
+    put_output_async: MethodMultiplexer
 
     _production_task: Task | None = None
 
@@ -185,16 +187,15 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         self.inputs = DelegatingIOManager()
         self.outputs = DelegatingIOManager()
-        self.format_output = MethodMultiplexer(instance=self)
 
         self.setup_kwargs = self.setup_kwargs.copy()
         self.evaluate_kwargs = self.evaluate_kwargs.copy()
         self.teardown_kwargs = self.teardown_kwargs.copy()
 
-        self.execute_input = MethodMultiplexer(instance=self)
-        self.execute_input_async = MethodMultiplexer(instance=self)
-        self.execute_output = MethodMultiplexer(instance=self)
-        self.execute_output_async = MethodMultiplexer(instance=self)
+        self.get_input = MethodMultiplexer(instance=self)
+        self.get_input_async = MethodMultiplexer(instance=self)
+        self.put_output = MethodMultiplexer(instance=self)
+        self.put_output_async = MethodMultiplexer(instance=self)
 
         self.futures = []
 
@@ -359,6 +360,47 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         self.set_execution_io()
 
+    def format_input(
+        self,
+        inputs: dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any] | None, dict[str, bytes] | None]:
+        formatted_inputs = {}
+        ids = {}
+        for k, v in inputs.items():
+            if isinstance(v, IdentifiedItem):
+                ids[k] = v[0]
+                formatted_inputs[k] = v[1]
+            else:
+                formatted_inputs[k] = v
+
+        return formatted_inputs, ids
+
+    def _format_output(
+        self,
+        outputs: Any,
+        ids: tuple[bytes, ...] = (),
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        keys = self.outputs.order
+        if len(keys) == 1:
+            return {keys[0]: IdentifiedItem(ids, outputs)}
+        else:
+            return {k: IdentifiedItem(ids, v) for k, v in zip(keys, outputs)}
+
+    def format_output(
+        self,
+        outputs: Any,
+        ids: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        new_ids = () if ids is None else tuple(set(chain.from_iterable(ids.values())))
+
+        return self._format_output(outputs, ids=new_ids, *args, **kwargs)
+
     def start_inputs(self) -> None:
         if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
             self.inputs.start_server()
@@ -432,10 +474,10 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             name_async = self.input_callback_method_async
 
         def callback(obj, inputs: dict[str, Any]) -> None:
-            return getattr(obj, name)(**inputs)
+            return getattr(obj, name)(inputs)
 
         async def callback_async(obj, inputs: dict[str, Any]) -> None:
-            return await getattr(obj, name_async)(**inputs)
+            return await getattr(obj, name_async)(inputs)
 
         # Use BaseMethod because it uses weak references
         instance = self._proxy if as_proxy and self.is_alive() else self
@@ -456,10 +498,10 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             name_async = self.input_callback_method_async
 
         def callback(obj, inputs: dict[str, Any]) -> None:
-            return getattr(obj, name)(**inputs)
+            return getattr(obj, name)(inputs)
 
         async def callback_async(obj, inputs: dict[str, Any]) -> None:
-            return await getattr(obj, name_async)(**inputs)
+            return await getattr(obj, name_async)(inputs)
 
         # Use BaseMethod because it uses weak references
         method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
@@ -476,14 +518,6 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         await self.inputs.start_listeners_async()
         await self.outputs.start_listeners_async()
 
-    def one_output(self, output) -> tuple:
-        """Formats an output if was the only output of the block."""
-        return (output,)
-
-    def multiple_outputs(self, output) -> None:
-        """Formats the outputs if of the block."""
-        return output
-
     # Setup
     def setup(self, *args: Any, **kwargs: Any) -> None:
         """A method for setting up the object."""
@@ -498,134 +532,116 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     # Evaluate
     @abstractmethod
-    def evaluate(self, *args, **kwargs: Any) -> Any:
+    def evaluate(self, *args, input_ids: dict[str, tuple[bytes, ...]] | None = None, **kwargs: Any) -> Any:
         """An abstract method which is the evaluation of this object.
 
         Args:
             *args: The arguments for evaluating.
+            input_ids: The ids of the inputs.
             **kwargs: The keyword arguments for evaluating.
 
         Returns:
             The result of the evaluation.
         """
 
-    async def evaluate_async(self, *args: Any, **kwargs: Any) -> Any:
-        """Asynchronously runs."""
+    async def evaluate_async(self, *args, input_ids: dict[str, tuple[bytes, ...]] | None = None, **kwargs: Any) -> Any:
+        """The asynchronous evaluation of this object.
+
+        Args:
+            *args: The arguments for evaluating.
+            input_ids: The ids of the inputs.
+            **kwargs: The keyword arguments for evaluating.
+
+        Returns:
+            The result of the evaluation.
+        """
         if iscoroutinefunction(self.evaluate):
-            return await self.evaluate(*args, **(self.teardown_kwargs | kwargs))
+            return await self.evaluate(*args, **kwargs)
         else:
-            return self.evaluate(*args, **(self.teardown_kwargs | kwargs))
+            return self.evaluate(*args, **kwargs)
 
     # Set Execution
     def set_execution_io(self) -> None:
         match len(self.inputs):
             case 0:
-                self.execute_input.select("_execute_no_input")
-                self.execute_input_async.select("_execute_no_input_async")
+                self.get_input.select("_get_no_input")
+                self.get_input_async.select("_get_no_input_async")
             case _:
-                self.execute_input.select("_execute_input")
-                self.execute_input_async.select("_execute_input_async")
+                self.get_input.select("_get_input")
+                self.get_input_async.select("_get_input_async")
 
         match len(self.outputs.order):
             case 0:
-                self.execute_output.select("_execute_no_output")
-                self.execute_output_async.select("_execute_no_output_async")
-                self.format_output.select("multiple_outputs")
-            case 1:
-                self.execute_output.select("_execute_one_output")
-                self.execute_output_async.select("_execute_one_output_async")
-                self.format_output.select("one_output")
+                self.put_output.select("_put_no_output")
+                self.put_output_async.select("_put_no_output_async")
             case _:
-                self.execute_output.select("_execute_multiple_outputs")
-                self.execute_output_async.select("_execute_multiple_outputs_async")
-                self.format_output.select("multiple_outputs")
+                self.put_output.select("_put_output")
+                self.put_output_async.select("_put_output_async")
 
     def set_execution_input_only(self) -> None:
         match len(self.inputs):
             case 0:
-                self.execute_input.select("_execute_no_input")
-                self.execute_input_async.select("_execute_no_input_async")
+                self.get_input.select("_get_no_input")
+                self.get_input_async.select("_get_no_input_async")
             case _:
-                self.execute_input.select("_execute_input")
-                self.execute_input_async.select("_execute_input_async")
+                self.get_input.select("_get_input")
+                self.get_input_async.select("_get_input_async")
 
-        self.execute_output.select("_execute_no_output")
-        self.execute_output_async.select("_execute_no_output_async")
-        self.format_output.select("multiple_outputs")
+        self.put_output.select("_put_no_output")
+        self.put_output_async.select("_put_no_output_async")
 
     def set_execution_output_only(self) -> None:
-        self.execute_input.select("_execute_no_input")
-        self.execute_input_async.select("_execute_no_input_async")
+        self.get_input.select("_get_no_input")
+        self.get_input_async.select("_get_no_input_async")
 
         match len(self.outputs.order):
             case 0:
-                self.execute_output.select("_execute_no_output")
-                self.execute_output_async.select("_execute_no_output_async")
-                self.format_output.select("multiple_outputs")
-            case 1:
-                self.execute_output.select("_execute_one_output")
-                self.execute_output_async.select("_execute_one_output_async")
-                self.format_output.select("one_output")
+                self.put_output.select("_put_no_output")
+                self.put_output_async.select("_put_no_output_async")
             case _:
-                self.execute_output.select("_execute_multiple_outputs")
-                self.execute_output_async.select("_execute_multiple_outputs_async")
-                self.format_output.select("multiple_outputs")
+                self.put_output.select("_put_output")
+                self.put_output_async.select("_put_output_async")
 
     def set_execution_no_io(self) -> None:
-        self.execute_input.select("_execute_no_input")
-        self.execute_input_async.select("_execute_no_input_async")
+        self.get_input.select("_get_no_input")
+        self.get_input_async.select("_get_no_input_async")
 
-        self.execute_output.select("_execute_no_output")
-        self.execute_output_async.select("_execute_no_output_async")
-        self.format_output.select("multiple_outputs")
+        self.put_output.select("_put_no_output")
+        self.put_output_async.select("_put_no_output_async")
 
-    # Execute Input
-    def _execute_no_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    # Get Input
+    def _get_no_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {}
 
-    async def _execute_no_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def _get_no_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {}
 
-    def _execute_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def _get_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self.inputs.get(*args, **kwargs)
 
-    async def _execute_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def _get_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return await self.inputs.get_async(*args, **kwargs)
 
-    # Execute Output
-    def _execute_no_output(self, *args: Any, **kwargs: Any) -> None:
+    # Put Output
+    def _put_no_output(self, *args: Any, **kwargs: Any) -> None:
         """Executes no output."""
 
-    async def _execute_no_output_async(self, *args: Any, **kwargs: Any) -> None:
+    async def _put_no_output_async(self, *args: Any, **kwargs: Any) -> None:
         """Asynchronously executes no output."""
 
-    def _execute_one_output(self, output, *args: Any, **kwargs: Any) -> None:
-        """Executes one output."""
-        self.outputs.put_ordered((output,), *args, **kwargs)
-
-    async def _execute_one_output_async(self, output, *args: Any, **kwargs: Any) -> None:
-        """Asynchronously executes one output."""
-        await self.outputs.put_ordered_async((output,), *args, **kwargs)
-
-    def _execute_multiple_outputs(self, output, *args: Any, **kwargs: Any) -> None:
-        """Evaluates from the inputs and puts the multiple results to the outputs."""
-        self.outputs.put_ordered(output, *args, **kwargs)
-
-    async def _execute_multiple_outputs_async(self, output, *args: Any, **kwargs: Any) -> None:
-        """Evaluates from the inputs and puts the multiple results to the outputs."""
-        await self.outputs.put_ordered_async(output, *args, **kwargs)
-
-    def _execute_dict_output(self, output, **kwargs: Any) -> None:
+    def _put_output(self, output, **kwargs: Any) -> None:
         """Evaluates from the inputs and puts the output dict directly to the outputs."""
         self.outputs.put_all(output, **kwargs)
 
-    async def _execute_dict_output_async(self, output, **kwargs: Any) -> None:
+    async def _put_output_async(self, output, **kwargs: Any) -> None:
         """Evaluates from the inputs and puts the output dict directly to the outputs."""
         await self.outputs.put_all_async(output, **kwargs)
 
     # Execute
     def _execute(self, *args: Any, **kwargs: Any) -> None:
-        self.execute_output(self.evaluate(**self.execute_input()))
+        inputs, ids = self.format_input(self.get_input())
+        if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            self.put_output(self.format_output(outputs, ids))
 
     def execute(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
@@ -633,7 +649,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     async def _execute_async(self, *args: Any, **kwargs: Any) -> None:
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
-        await self.execute_output_async(await evaluate_method(**await self.execute_input_async()))
+        inputs, ids = self.format_input(await self.get_input_async())
+        if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            await self.put_output_async(self.format_output(outputs, ids))
 
     async def execute_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
@@ -643,16 +661,14 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
         while self._loop_event:
             # Get Inputs
-            inputs = self.execute_input()
+            inputs, ids = self.format_input(self.get_input())
             if any((inputs[n]) for n in self.inputs.required):
-                self.loop_event.clear()
+                self._loop_event = False
                 continue
 
-            # Evaluate
-            output = self.evaluate(**inputs)
-
-            # Outputs
-            self.execute_output(output)
+            # Evaluate and Output
+            if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+                self.put_output(self.format_output(outputs, ids))
 
     async def _execution_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively until an event stops it."""
@@ -662,38 +678,41 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Loop the evaluation
         while self._loop_event:
             # Get Inputs
-            inputs = await create_task(self.execute_input_async())
+            inputs, ids = self.format_input(await create_task(self.get_input_async()))
             if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.required):
                 self._loop_event = False
                 continue
 
-            # Evaluate
-            output = await create_task(evaluate_method(**inputs))
-
-            # Outputs
-            await create_task(self.execute_output_async(output))
+            # Evaluate and Output
+            if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
+                await create_task(self.put_output_async(self.format_output(outputs, ids)))
 
     # Produce
-    def _produce(self, *args: Any, **kwargs: Any) -> None:
-        self.execute_output(self.evaluate(*args, **kwargs))
+    def _produce(self, inputs: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
+        inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
+        if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            self.put_output(self.format_output(outputs, ids))
 
     def produce(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            self._full_execute(*args, **kwargs)
+            self._produce(*args, **kwargs)
 
-    async def _produce_async(self, *args: Any, **kwargs: Any) -> None:
+    async def _produce_async(self, inputs: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
+        inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
-        await self.execute_output_async(await evaluate_method(*args, **kwargs))
+        if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
+            await create_task(self.put_output_async(self.format_output(outputs, ids)))
 
     async def produce_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            await self._full_execute_async(*args, **kwargs)
+            await self._produce_async(*args, **kwargs)
 
     # Production Loop
     def _production_loop(self, *args: Any, **kwargs: Any) -> None:
         while self._loop_event:
             # Evaluate and Output
-            self.execute_output(self.evaluate(*args, **kwargs))
+            if (outputs := self.evaluate(*args, **kwargs)) is not self.no_output_sentinel:
+                self.put_output(self.format_output(outputs))
 
     async def _production_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively and outputs until an event stops it."""
@@ -702,8 +721,9 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         # Loop the evaluation
         while self._loop_event:
-            # Evaluate and Outputs
-            await create_task(self.execute_output_async(await create_task(evaluate_method(*args, **kwargs))))
+            # Evaluate and Output
+            if (outputs := await create_task(evaluate_method(*args, **kwargs))) is not self.no_output_sentinel:
+                await create_task(self.put_output_async(self.format_output(outputs)))
 
     # Teardown
     def teardown(self, *args: Any, **kwargs: Any) -> None:

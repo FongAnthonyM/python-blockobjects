@@ -48,5 +48,5 @@ async def main():
 
 # Main #
 if __name__ == "__main__":
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+    DEFAULT_PROCESS_CONTEXT.select_context("ray")
     run(main())
