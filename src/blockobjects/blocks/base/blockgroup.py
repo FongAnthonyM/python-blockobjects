@@ -244,7 +244,7 @@ class BlockGroup(BaseBlock):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        self.create_blocks(**(create_kwargs or {}))
+        self.setup_blocks(**(create_kwargs or {}))
         self.link_inner_io(**(link_kwargs or {}))
         self.lazy_blocks = False
 

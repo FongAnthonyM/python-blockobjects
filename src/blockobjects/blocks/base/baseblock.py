@@ -120,6 +120,15 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     input_callback_method: str = "_produce"
     input_callback_method_async: str = "_produce_async"
 
+    get_input_method: str = "_get_input"
+    get_input_method_async: str = "_get_input_async"
+    get_input: MethodMultiplexer
+    get_input_async: MethodMultiplexer
+    put_output_method: str = "_put_output"
+    put_output_method_async: str = "_put_output_async"
+    put_output: MethodMultiplexer
+    put_output_async: MethodMultiplexer
+
     # Setup/Evaluate/Teardown
     sets_up: bool = True
     tears_down: bool = True
@@ -131,11 +140,6 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     _setup: MethodMultiplexer
     _evaluate: MethodMultiplexer
     _teardown: MethodMultiplexer
-
-    get_input: MethodMultiplexer
-    get_input_async: MethodMultiplexer
-    put_output: MethodMultiplexer
-    put_output_async: MethodMultiplexer
 
     _production_task: Task | None = None
 
@@ -567,16 +571,16 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.get_input.select("_get_no_input")
                 self.get_input_async.select("_get_no_input_async")
             case _:
-                self.get_input.select("_get_input")
-                self.get_input_async.select("_get_input_async")
+                self.get_input.select(self.get_input_method)
+                self.get_input_async.select(self.get_input_method_async)
 
         match len(self.outputs.order):
             case 0:
                 self.put_output.select("_put_no_output")
                 self.put_output_async.select("_put_no_output_async")
             case _:
-                self.put_output.select("_put_output")
-                self.put_output_async.select("_put_output_async")
+                self.put_output.select(self.put_output_method)
+                self.put_output_async.select(self.put_output_method_async)
 
     def set_execution_input_only(self) -> None:
         match len(self.inputs):
@@ -584,8 +588,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.get_input.select("_get_no_input")
                 self.get_input_async.select("_get_no_input_async")
             case _:
-                self.get_input.select("_get_input")
-                self.get_input_async.select("_get_input_async")
+                self.get_input.select(self.get_input_method)
+                self.get_input_async.select(self.get_input_method_async)
 
         self.put_output.select("_put_no_output")
         self.put_output_async.select("_put_no_output_async")
@@ -599,8 +603,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.put_output.select("_put_no_output")
                 self.put_output_async.select("_put_no_output_async")
             case _:
-                self.put_output.select("_put_output")
-                self.put_output_async.select("_put_output_async")
+                self.put_output.select(self.put_output_method)
+                self.put_output_async.select(self.put_output_method_async)
 
     def set_execution_no_io(self) -> None:
         self.get_input.select("_get_no_input")
@@ -630,12 +634,18 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         """Asynchronously executes no output."""
 
     def _put_output(self, output, **kwargs: Any) -> None:
-        """Evaluates from the inputs and puts the output dict directly to the outputs."""
         self.outputs.put_all(output, **kwargs)
 
     async def _put_output_async(self, output, **kwargs: Any) -> None:
-        """Evaluates from the inputs and puts the output dict directly to the outputs."""
         await self.outputs.put_all_async(output, **kwargs)
+
+    def _put_multiple_output(self, outputs: Iterable[dict[str, Any]], **kwargs: Any) -> None:
+        for output in outputs:
+            self.outputs.put_all(output, **kwargs)
+
+    async def _put_multiple_output_async(self, outputs: Iterable[dict[str, Any]], **kwargs: Any) -> None:
+        for output in outputs:
+            await self.outputs.put_all_async(output, **kwargs)  # Not using gather to retain order (may change)
 
     # Execute
     def _execute(self, *args: Any, **kwargs: Any) -> None:

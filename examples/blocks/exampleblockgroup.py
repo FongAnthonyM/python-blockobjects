@@ -77,7 +77,7 @@ class ExampleBlockGroup(BlockGroup):
         generator_router.link_forward("sum_1", sum_1.inputs, "data")  # Link the router to the sum block.
         generator_router.link_forward("sum_2", sum_2.inputs, "data")  # Link the router to the sum block.
 
-        # Aggregate the sum outputs to a single array and send to the checker.
+        # Aggregate the sum outputs to a single IO and send to the checker.
         sum_1.outputs.link_forward("out_number", checker.inputs, "data")
         sum_2.outputs.link_forward("out_number", checker.inputs, "data")
 
