@@ -84,10 +84,12 @@ class BlockGroup(BaseBlock):
     }
 
     init_blocks: ClassVar[bool] = True
+    init_io_links: ClassVar[bool] = False
 
     # Attributes #
     sets_up_blocks: bool = True
-    lazy_blocks: bool = True
+    sets_up_inner_io_links: bool = True
+    lazy_inner_io: bool = True
     lazy_finalize: bool = True
 
     wrapped_getter: str | None = None
@@ -114,6 +116,7 @@ class BlockGroup(BaseBlock):
         setup_kwargs: dict[str, Any] | None = None,
         init_blocks: bool | None = None,
         create_kwargs: dict[str, Any] | None = None,
+        init_io_links: bool | None = None,
         link_kwargs: dict[str, Any] | None = None,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
@@ -144,6 +147,7 @@ class BlockGroup(BaseBlock):
                 setup_kwargs=setup_kwargs,
                 init_blocks=init_blocks,
                 create_kwargs=create_kwargs,
+                init_io_links=init_io_links,
                 link_kwargs=link_kwargs,
                 start_server=start_server,
                 proxy_context=proxy_context,
@@ -164,6 +168,7 @@ class BlockGroup(BaseBlock):
         setup_kwargs: dict[str, Any] | None = None,
         init_blocks: bool | None = None,
         create_kwargs: dict[str, Any] | None = None,
+        init_io_links: bool | None = None,
         link_kwargs: dict[str, Any] | None = None,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
@@ -209,7 +214,10 @@ class BlockGroup(BaseBlock):
             self.create_links_kwargs.update(link_kwargs)
 
         if _state is None and (init_blocks or (init_blocks is None and self.init_blocks)):
-            self.construct_blocks(self.create_blocks_kwargs, self.create_links_kwargs)
+            self.setup_blocks(**self.create_blocks_kwargs)
+
+        if _state is None and (init_io_links or (init_io_links is None and self.init_io_links)):
+            self.setup_inner_io_links(**self.create_links_kwargs)
 
         if _state is None and (init_setup or (init_setup is None and self.init_setup)):
             self.setup(**({} if setup_kwargs is None else setup_kwargs))
@@ -237,18 +245,7 @@ class BlockGroup(BaseBlock):
             await self.create_blocks_async(*args, **kwargs)
             self.sets_up_blocks = False
 
-    def construct_blocks(
-        self,
-        create_kwargs: dict[str, Any] | None = None,
-        link_kwargs: dict[str, Any] | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        self.setup_blocks(**(create_kwargs or {}))
-        self.link_inner_io(**(link_kwargs or {}))
-        self.lazy_blocks = False
-
-    def start_blocks_passive(self) -> None:
+    def start_blocks(self) -> None:
         for block in self.blocks.values():
             if block.inputs.will_proxy:
                 block.inputs.start_server()
@@ -269,6 +266,16 @@ class BlockGroup(BaseBlock):
 
     async def link_inner_io_async(self, *args: Any, **kwargs: Any) -> Any:
         return self.link_inner_io(*args, **kwargs)
+
+    def setup_inner_io_links(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_inner_io_links:
+            self.link_inner_io(*args, **kwargs)
+            self.sets_up_inner_io_links = False
+
+    async def setup_inner_io_links_async(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_inner_io_links:
+            await self.link_inner_io_async(*args, **kwargs)
+            self.sets_up_inner_io_links = False
 
     def get_inner_io_id(self) -> dict[int, IORouter]:
         io_ = {}
@@ -466,7 +473,7 @@ class BlockGroup(BaseBlock):
             if self.outputs.is_proxy():
                 self.outputs.update()
 
-            self.link_inner_io()
+            self.setup_inner_io_links()
             self.start_inner_io()
             self.setup_inner_io()
 
@@ -484,7 +491,7 @@ class BlockGroup(BaseBlock):
             if self.outputs.is_proxy():
                 await self.outputs.update_async()
 
-            await self.link_inner_io_async()
+            await self.setup_inner_io_links_async()
             await self.start_inner_io_async()
             await self.setup_inner_io_async()
 
@@ -542,7 +549,7 @@ class BlockGroup(BaseBlock):
         for block in self.blocks.values():
             block.full_execute()
 
-    # Start Passive
+    # Start
     async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 
@@ -589,7 +596,7 @@ class BlockGroup(BaseBlock):
 
         # Use Correct Context
         if self.is_alive():
-            self._proxy.start_passive(None, s_kwargs, False)
+            self._proxy.start(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
         else:
@@ -630,7 +637,7 @@ class BlockGroup(BaseBlock):
         else:
             await self._start_async(s_kwargs)
 
-    # Stop Block Passive Execution
+    # Stop Block Execution
     async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
 

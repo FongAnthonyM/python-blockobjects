@@ -92,7 +92,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
     local_methods: ClassVar[set] = {"stop", "stop_async"}
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
-    default_required_input: ClassVar[tuple[str, ...]] = ()
+    default_required_input: ClassVar[tuple[str, ...] | None] = None
     default_optional_input: ClassVar[dict[str, Any]] = {}
     default_output_names: ClassVar[tuple[str, ...]] = ()
 

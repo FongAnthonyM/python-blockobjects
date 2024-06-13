@@ -79,7 +79,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # IO
     default_io: type[BaseIO] = IOQueue
-    required: tuple[str] = ()
+    required: tuple[str] | None = None
     optional_defaults: dict[str, Any] = {}
 
     # Links
@@ -517,8 +517,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             True if all required IO objects are ready, False otherwise.
         """
-        required = (self.required or self.order) if required is None else required
-        return all(v.poll() for k, v in self.data.items() if k in required)
+        if required := set((self.order if self.required is None else self.required) if required is None else required):
+            return all(v.poll() for k, v in self.data.items() if k in required)
+        else:
+            return any(v.poll() for k, v in self.data.items())
 
     async def callback_condition_async(self, required: Iterable[str] | None = None, *args, **kwargs) -> bool:
         """Asynchronously checks if all required IO objects are ready for a callback.
@@ -531,8 +533,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             True if all required IO objects are ready, False otherwise.
         """
-        required = (self.required or self.order) if required is None else required
-        return all(v.poll() for k, v in self.data.items() if k in required)
+        if required := set((self.order if self.required is None else self.required) if required is None else required):
+            return all(v.poll() for k, v in self.data.items() if k in required)
+        else:
+            return any(v.poll() for k, v in self.data.items())
 
     def _execute_next_callback(self, task, fut) -> None:
         """
@@ -802,7 +806,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        required = set((self.required or self.order) if required is None else required)
+        required = set((self.order if self.required is None else self.required) if required is None else required)
 
         if defaults is None:
             defaults = self.optional_defaults
@@ -828,7 +832,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        required = set((self.required or self.order) if required is None else required)
+        required = set((self.order if self.required is None else self.required) if required is None else required)
 
         if defaults is None:
             defaults = self.optional_defaults
@@ -915,7 +919,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.data[name].put(value, *args, **kwargs)
 
         # Schedule Callback
-        required = set((self.required or self.order) if required is None else required)
+        required = set((self.order if self.required is None else self.required) if required is None else required)
         self.schedule_callback(required, default, defaults)
 
     async def put_callback_async(
@@ -940,7 +944,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         await self.data[name].put_async(value, *args, **kwargs)
 
         # Schedule Callback
-        required = set((self.required or self.order) if required is None else required)
+        required = set((self.order if self.required is None else self.required) if required is None else required)
         await self.schedule_callback_async(required, default, defaults)
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
