@@ -88,6 +88,7 @@ class BlockGroup(BaseBlock):
 
     # Attributes #
     sets_up_blocks: bool = True
+    sets_up_inner_io: bool = True
     sets_up_inner_io_links: bool = True
     lazy_inner_io: bool = True
     lazy_finalize: bool = True
@@ -256,6 +257,28 @@ class BlockGroup(BaseBlock):
             block.start()
 
     # IO
+    def create_inner_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        """Creates the IO.
+
+        Args:
+            *args: The arguments for creating the inner blocks.
+            override: Determines if the inner blocks will be overridden.
+            **kwargs: The keyword arguments for creating the inner blocks.
+        """
+
+    async def create_inner_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        return self.create_inner_io(*args, override=override, **kwargs)
+
+    def setup_inner_io(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_inner_io:
+            self.create_inner_io(*args, **kwargs)
+            self.sets_up_inner_io = False
+
+    async def setup_inner_io_async(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_inner_io:
+            await self.create_inner_io_async(*args, **kwargs)
+            self.sets_up_inner_io = False
+
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
         """Links the inner blocks' IO.
 
@@ -324,10 +347,10 @@ class BlockGroup(BaseBlock):
 
     def setup_inner_io(self) -> None:
         for block in self.blocks.values():
-            block.setup_io()
+            block.actualize_io()
 
     async def setup_inner_io_async(self) -> None:
-        await gather(*(block.setup_io_async() for block in self.blocks.values()))
+        await gather(*(block.actualize_io_async() for block in self.blocks.values()))
 
     def _build_inner_delegated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
         for key, other in io_router.get_links_to().items():
@@ -466,13 +489,14 @@ class BlockGroup(BaseBlock):
         await self.inputs.start_listeners_async()
         await self.outputs.start_listeners_async()
 
-    def setup_io(self) -> None:
-        if self.sets_up_io:
+    def actualize_io(self) -> None:
+        if self.actualize_io_:
             if self.inputs.is_proxy():
                 self.inputs.update()
             if self.outputs.is_proxy():
                 self.outputs.update()
 
+            self.setup_inner_io()
             self.setup_inner_io_links()
             self.start_inner_io()
             self.setup_inner_io()
@@ -482,15 +506,16 @@ class BlockGroup(BaseBlock):
             if self.outputs.is_proxy():
                 self.outputs.update_server_io()
 
-            self.sets_up_io = False
+            self.actualize_io_ = False
 
-    async def setup_io_async(self) -> None:
-        if self.sets_up_io:
+    async def actualize_io_async(self) -> None:
+        if self.actualize_io_:
             if self.inputs.is_proxy():
                 await self.inputs.update_async()
             if self.outputs.is_proxy():
                 await self.outputs.update_async()
 
+            await self.setup_inner_io_async()
             await self.setup_inner_io_links_async()
             await self.start_inner_io_async()
             await self.setup_inner_io_async()
@@ -500,7 +525,7 @@ class BlockGroup(BaseBlock):
             if self.outputs.is_proxy():
                 await self.outputs.update_server_io_async()
 
-            self.sets_up_io = False
+            self.actualize_io_ = False
 
     # Evaluate
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
@@ -585,12 +610,12 @@ class BlockGroup(BaseBlock):
         if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
             self.setup_blocks()
             self.start_io()
-            self.setup_io()
+            self.actualize_io()
             self._start_server()
             self.finalize_io()
         else:
             self.setup_blocks()
-            self.setup_io()
+            self.actualize_io()
             if finalize:
                 self.finalize_io()
 
@@ -622,12 +647,12 @@ class BlockGroup(BaseBlock):
         if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
             await self.setup_blocks_async()
             await self.start_io_async()
-            await self.setup_io_async()
+            await self.actualize_io_async()
             self._start_server()
             await self.finalize_io_async()
         else:
             await self.setup_blocks_async()
-            await self.setup_io_async()
+            await self.actualize_io_async()
             if finalize:
                 await self.finalize_io_async()
 

@@ -112,6 +112,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
     # IO
     sets_up_io: bool = True
+    actualize_io_: bool = True
     inputs: DelegatingIOManager
     outputs: DelegatingIOManager
 
@@ -362,7 +363,31 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self.inputs.required = self.default_required_input
         self.inputs.optional_defaults.update(self.default_optional_input)
 
-        self.set_execution_io()
+        self.setup_io()
+
+    def create_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        """Creates the IO.
+
+        Args:
+            *args: The arguments for creating the inner blocks.
+            override: Determines if the inner blocks will be overridden.
+            **kwargs: The keyword arguments for creating the inner blocks.
+        """
+
+    async def create_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        return self.create_io(*args, override=override, **kwargs)
+
+    def setup_io(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_io:
+            self.create_io(*args, **kwargs)
+            self.set_execution_io()
+            self.sets_up_io = False
+
+    async def setup_io_async(self, *args: Any, **kwargs: Any) -> None:
+        if self.sets_up_io:
+            await self.create_io_async(*args, **kwargs)
+            self.set_execution_io()
+            self.sets_up_io = False
 
     def format_input(
         self,
@@ -449,7 +474,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             await self.outputs.update_server_io_async()
             await self.outputs.start_listeners_async()
 
-    def setup_io(self) -> None:
+    def actualize_io(self) -> None:
         if self.sets_up_io:
             if self.inputs.is_proxy():
                 self.inputs.update_server_io()
@@ -457,7 +482,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
                 self.outputs.update_server_io()
             self.sets_up_io = False
 
-    async def setup_io_async(self) -> None:
+    async def actualize_io_async(self) -> None:
         if self.sets_up_io:
             if self.inputs.is_proxy():
                 await self.inputs.update_server_io_async()
@@ -893,11 +918,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Setup IO and Start Proxy
         if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
             self.start_io()
-            self.setup_io()
+            self.actualize_io()
             self._start_server()
             self.finalize_io()
         else:
-            self.setup_io()
+            self.actualize_io()
             if finalize:
                 self.finalize_io()
 
@@ -928,11 +953,11 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         # Setup IO and Start Proxy
         if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
             await self.start_io_async()
-            await self.setup_io_async()
+            await self.actualize_io_async()
             self._start_server()
             await self.finalize_io_async()
         else:
-            await self.setup_io_async()
+            await self.actualize_io_async()
             if finalize:
                 await self.finalize_io_async()
 
