@@ -280,7 +280,7 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             self.setup_kwargs.update(setup_kwargs)
 
         if init_io and _state is None:
-            self.construct_io()
+            self.create_io()
 
         if _state is not None and "_will_proxy" in _state:
             del _state["_will_proxy"]
@@ -337,14 +337,14 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
         self._loop_event = False
 
     # IO
-    def construct_io(
+    def create_io(
         self,
         input_names: str | Iterable[str] | None = None,
         output_names: str | Iterable[str] | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """Constructs the io for this object.
+        """Creates the IO for this object.
 
         Args:
             input_names: The names of the inputs to create.
@@ -365,8 +365,8 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
 
         self.setup_io()
 
-    def create_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Creates the IO.
+    def build_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        """Builds the IO with the default routing.
 
         Args:
             *args: The arguments for creating the inner blocks.
@@ -374,18 +374,18 @@ class BaseBlock(ProcessDelegate, CallableMultiplexObject):
             **kwargs: The keyword arguments for creating the inner blocks.
         """
 
-    async def create_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        return self.create_io(*args, override=override, **kwargs)
+    async def build_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        return self.build_io(*args, override=override, **kwargs)
 
     def setup_io(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_io:
-            self.create_io(*args, **kwargs)
+            self.build_io(*args, **kwargs)
             self.set_execution_io()
             self.sets_up_io = False
 
     async def setup_io_async(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_io:
-            await self.create_io_async(*args, **kwargs)
+            await self.build_io_async(*args, **kwargs)
             self.set_execution_io()
             self.sets_up_io = False
 

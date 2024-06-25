@@ -31,8 +31,8 @@ from baseobjects.functions import MethodMultiplexer
 import dill
 
 # Local Packages #
+from ...process import AsyncQueue
 from ..base import IOMap, BaseIO, BaseIOMultiplexer, IODelegator, IOWrapper
-from ..containers import IOQueue
 
 
 # Definitions #
@@ -78,7 +78,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     break_sentinel: SentinelObject = SentinelObject("io_break")
 
     # IO
-    default_io: type[BaseIO] = IOQueue
+    default_io: type[BaseIO] = AsyncQueue
     required: tuple[str] | None = None
     optional_defaults: dict[str, Any] = {}
 
@@ -382,13 +382,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if len(keys) == 1:
             self.data[keys[0]] = io_
         else:
-            self.data[keys[0]].set_recursive_io(keys[1:], io_)
+            self.data[keys[0]].set_recursive(keys[1:], io_)
 
     async def set_recursive_async(self, keys: tuple[str, ...], io_: BaseIO) -> None:
         if len(keys) == 1:
             self.data[keys[0]] = io_
         else:
-            await self.data[keys[0]].set_recursive_io_async(keys[1:], io_)
+            await self.data[keys[0]].set_recursive_async(keys[1:], io_)
 
     # Linking
     def create_link_none(self, *args: Any, **kwargs: Any) -> None:

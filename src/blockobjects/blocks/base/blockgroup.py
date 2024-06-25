@@ -240,11 +240,22 @@ class BlockGroup(BaseBlock):
         if self.sets_up_blocks:
             self.create_blocks(*args, **kwargs)
             self.sets_up_blocks = False
+        self.setup_inner_blocks()
 
     async def setup_blocks_async(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_blocks:
             await self.create_blocks_async(*args, **kwargs)
             self.sets_up_blocks = False
+        await self.setup_inner_blocks_async()
+
+    def setup_inner_blocks(self) -> None:
+        for block in self.blocks.values():
+            if (setup_blocks := getattr(block, "setup_blocks", None)) is not None:
+                setup_blocks()
+
+    async def setup_inner_blocks_async(self) -> None:
+        sb_ms = (sb_m() for b in self.blocks.values() if (sb_m := getattr(b, "setup_blocks_async", None)) is not None)
+        await gather(*sb_ms)
 
     def start_blocks(self) -> None:
         for block in self.blocks.values():
@@ -257,8 +268,8 @@ class BlockGroup(BaseBlock):
             block.start()
 
     # IO
-    def create_inner_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Creates the IO.
+    def build_inner_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        """Builds the inner blocks' IO with new routing to properly link with other blocks' IO.
 
         Args:
             *args: The arguments for creating the inner blocks.
@@ -266,17 +277,17 @@ class BlockGroup(BaseBlock):
             **kwargs: The keyword arguments for creating the inner blocks.
         """
 
-    async def create_inner_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        return self.create_inner_io(*args, override=override, **kwargs)
+    async def build_inner_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
+        return self.build_inner_io(*args, override=override, **kwargs)
 
     def setup_inner_io(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_inner_io:
-            self.create_inner_io(*args, **kwargs)
+            self.build_inner_io(*args, **kwargs)
             self.sets_up_inner_io = False
 
     async def setup_inner_io_async(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_inner_io:
-            await self.create_inner_io_async(*args, **kwargs)
+            await self.build_inner_io_async(*args, **kwargs)
             self.sets_up_inner_io = False
 
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
@@ -345,11 +356,11 @@ class BlockGroup(BaseBlock):
     async def materialize_inner_io_async(self) -> None:
         await gather(*(block.materialize_io_async() for block in self.blocks.values()))
 
-    def setup_inner_io(self) -> None:
+    def actualize_inner_io(self) -> None:
         for block in self.blocks.values():
             block.actualize_io()
 
-    async def setup_inner_io_async(self) -> None:
+    async def actualize_inner_io_async(self) -> None:
         await gather(*(block.actualize_io_async() for block in self.blocks.values()))
 
     def _build_inner_delegated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
@@ -499,7 +510,7 @@ class BlockGroup(BaseBlock):
             self.setup_inner_io()
             self.setup_inner_io_links()
             self.start_inner_io()
-            self.setup_inner_io()
+            self.actualize_inner_io()
 
             if self.inputs.is_proxy():
                 self.inputs.update_server_io()
@@ -518,7 +529,7 @@ class BlockGroup(BaseBlock):
             await self.setup_inner_io_async()
             await self.setup_inner_io_links_async()
             await self.start_inner_io_async()
-            await self.setup_inner_io_async()
+            await self.actualize_inner_io_async()
 
             if self.inputs.is_proxy():
                 await self.inputs.update_server_io_async()

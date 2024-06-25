@@ -52,6 +52,7 @@ class ContextualIOManager(BaseIOManager):
         "default": DEFAULT_PROCESS_CONTEXT,
         "local": ManagerContext({"async": AsyncContext()}, "async"),
     }
+    default_io: type[BaseIO] = IOQueue
 
     # Magic Methods #
     # Construction/Destruction
