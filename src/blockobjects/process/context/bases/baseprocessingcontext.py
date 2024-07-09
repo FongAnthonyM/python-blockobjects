@@ -14,7 +14,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from typing import Any
-from weakref import ref
+from weakref import ref, WeakValueDictionary
 
 # Third-Party Packages #
 from baseobjects import BaseObject
@@ -53,7 +53,7 @@ class BaseProcessingContext(BaseObject):
     # Construction/Destruction
     def __init__(self, init: bool = True) -> None:
         # Attributes #
-        self.object_register = {n: {} for n in self.object_categories}
+        self.object_register = {n: WeakValueDictionary() for n in self.object_categories}
 
         # Parent Attributes #
         super().__init__(init=False)
@@ -81,7 +81,7 @@ class BaseProcessingContext(BaseObject):
         """
         object_categories = state.pop("object_register")
         super().__setstate__(state)
-        self.object_register = {n: {} for n in object_categories}
+        self.object_register = {n: WeakValueDictionary() for n in object_categories}
 
     # Instance Methods #
     # Context Objects
@@ -100,7 +100,7 @@ class BaseProcessingContext(BaseObject):
         if cls is None:
             cls = self.lock_type
         lock = cls(*args, **kwargs)
-        self.object_register["locks"][(str(id(lock)) if name is None else name)] = ref(lock)
+        self.object_register["locks"][(str(id(lock)) if name is None else name)] = lock
         return lock
 
     def require_lock(
@@ -132,7 +132,7 @@ class BaseProcessingContext(BaseObject):
             lock: The lock to add to the object contexts.
             name: The name of the lock.
         """
-        self.object_register["locks"][(str(id(lock)) if name is None else name)] = ref(lock)
+        self.object_register["locks"][(str(id(lock)) if name is None else name)] = lock
 
     def create_event(
         self,
@@ -155,7 +155,7 @@ class BaseProcessingContext(BaseObject):
         if cls is None:
             cls = self.event_type
         event = cls(*args, **kwargs)
-        self.object_register["events"][(str(id(event)) if name is None else name)] = ref(event)
+        self.object_register["events"][(str(id(event)) if name is None else name)] = event
         return event
 
     def require_event(
@@ -187,7 +187,7 @@ class BaseProcessingContext(BaseObject):
             event: The event to add to the object register.
             name: The name of the event.
         """
-        self.object_register["events"][(str(id(event)) if name is None else name)] = ref(event)
+        self.object_register["events"][(str(id(event)) if name is None else name)] = event
 
     def create_queue(
         self,
@@ -210,7 +210,7 @@ class BaseProcessingContext(BaseObject):
         if cls is None:
             cls = self.queue_type
         queue = cls(*args, **kwargs)
-        self.object_register["queues"][(str(id(queue)) if name is None else name)] = ref(queue)
+        self.object_register["queues"][(str(id(queue)) if name is None else name)] = queue
         return queue
 
     def require_queue(
@@ -242,7 +242,7 @@ class BaseProcessingContext(BaseObject):
             queue: The queue to add to the object register.
             name: The name of the queue.
         """
-        self.object_register["queues"][(str(id(queue)) if name is None else name)] = ref(queue)
+        self.object_register["queues"][(str(id(queue)) if name is None else name)] = queue
 
     def create_simple_queue(
         self,
@@ -265,7 +265,7 @@ class BaseProcessingContext(BaseObject):
         if cls is None:
             cls = self.simple_queue_type
         queue = cls(*args, **kwargs)
-        self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = ref(queue)
+        self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = queue
         return queue
 
     def require_simple_queue(
@@ -297,7 +297,7 @@ class BaseProcessingContext(BaseObject):
             queue: The simple queue to add to the object register.
             name: The name of the simple queue.
         """
-        self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = ref(queue)
+        self.object_register["simple_queues"][(str(id(queue)) if name is None else name)] = queue
 
     def create_proxy(
         self,
@@ -326,7 +326,7 @@ class BaseProcessingContext(BaseObject):
 
         proxy = c_cls.new_proxy(cls, args, kwargs=kwargs, *_args, exposed=exposed, **_kwargs)
 
-        self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = ref(proxy)
+        self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = proxy
         return proxy
 
     def require_proxy(
@@ -360,4 +360,4 @@ class BaseProcessingContext(BaseObject):
             proxy: The proxy to add to the object register.
             name: The name of the proxy.
         """
-        self.object_register["proxy"][(str(id(proxy)) if name is None else name)] = ref(proxy)
+        self.object_register["proxy"][(str(id(proxy)) if name is None else name)] = proxy

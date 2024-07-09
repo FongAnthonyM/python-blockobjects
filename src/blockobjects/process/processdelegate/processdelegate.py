@@ -29,33 +29,56 @@ from .delegatemethod import delegatemethod
 # Definitions #
 # Classes #
 class ProcessDelegate(ContextualObjectInterface):
-    """
+    """A base class for creating objects which delegate method calls to either the local or server copy of this object.
+
+    This class provides a structured way to manage and delegate method calls to server processes. It includes methods
+    for starting and stopping servers, managing proxy contexts, and handling state synchronization between local and
+    server objects. It is designed to work within a processing context, which allows for dynamic control over the
+    implementation of the server process.
 
     Class Attributes:
+        public_exposed: Determines if public methods are exposed for delegation.
+        _exposed_: A private set of methods which are exposed for delegation.
+        exposed: A public set of methods which are exposed for delegation.
+        _unexposed_: A private set of methods which only exist locally, cannot invoke server methods.
+        unexposed: A public set of methods which only exist locally, cannot invoke server methods.
+        _local_methods_: A private set of methods which run locally but can invoke server calls.
+        local_methods: A public set of methods which run locally but can invoke server calls.
 
     Attributes:
+        _proxy_context: The processing context associated with this delegate.
+        _untransmittable_: A private set of attribute names that should not be transmitted to the server with updates.
+        untransmittable: A public set of attribute names that should not be transmitted to the server with updates.
+        _is_proxy: Flag indicating if this object is executing on a server as proxy or locally not a proxy.
+        proxy_kwargs: Keyword arguments for proxy creation.
+        _proxy: The proxy object which this object wraps to invoke calls to the server.
 
     Args:
-
+        start_server: Determines whether the server should be started during construction.
+        proxy_context : The processing context to be used by this delegate.
+        _state: A dictionary of attributes for initializing this object.
+        init: Determine if the object should be constructed.
     """
 
     # Class Attributes #
     public_exposed: ClassVar[bool] = True
-    _exposed_: ClassVar[set] = set()
-    exposed: ClassVar[set] = set()
+    _exposed_: ClassVar[set[str]] = set()
+    exposed: ClassVar[set[str]] = set()
 
-    _unexposed_: ClassVar[set] = {"is_proxy", "is_alive", "get_context", "set_context"}
-    unexposed: ClassVar[set] = set()
+    _unexposed_: ClassVar[set[str]] = {"is_proxy", "is_alive", "get_context", "set_context"}
+    unexposed: ClassVar[set[str]] = set()
 
-    _local_methods_: ClassVar[set] = {
+    _local_methods_: ClassVar[set[str]] = {
         "stop_server",
         "stop_server_async",
         "set_server_state",
         "set_server_state_async",
+        "update",
         "update_async",
+        "update_server",
         "update_server_async",
     }
-    local_methods: ClassVar[set] = set()
+    local_methods: ClassVar[set[str]] = set()
 
     # Class Methods #
     @classmethod
@@ -96,7 +119,8 @@ class ProcessDelegate(ContextualObjectInterface):
 
     # Attributes #
     _proxy_context: BaseProcessingContext
-    untransmittable: set = set()
+    _untransmittable_: set[str] = {"_proxy", "_is_proxy", "_proxy_context"}
+    untransmittable: set[str] = set()
     _is_proxy: bool = False
 
     proxy_kwargs: dict[str, dict[str, Any]] = {}
@@ -241,7 +265,7 @@ class ProcessDelegate(ContextualObjectInterface):
             exclude = set()
 
         state = self.__getstate__()
-        for name in self.untransmittable | exclude:
+        for name in self._untransmittable_ | self.untransmittable | exclude:
             if name in state:
                 del state[name]
         return state
