@@ -293,9 +293,13 @@ def AutoMultiprocessingProxy(token, serializer, manager=None, authkey=None, expo
     # proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref, manager_owned=manager_owned)
     name = f"AutoMultiprocessingProxy{token.typeid}"
     ProxyType = MultiprocessingProxy.create_proxy_type(name, exposed=exposed)
-    proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref, manager_owned=manager_owned)
-    proxy._isauto = True
-    return proxy
+    try:
+        proxy = ProxyType(token, serializer, manager=manager, authkey=authkey, incref=incref, manager_owned=manager_owned)
+    except FileNotFoundError:
+        return None
+    else:
+        proxy._isauto = True
+        return proxy
 
 
 # Overrides #

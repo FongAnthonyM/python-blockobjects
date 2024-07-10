@@ -161,7 +161,7 @@ class MultiProcessingContext(BaseProcessingContext):
         p_ref = ref(proxy)
         p_name = name or str(id(proxy))
         self.proxy_register[p_name] = (p_ref, manager, manager_type)
-        self.object_register["proxies"][p_name] = p_ref
+        self.object_register["proxies"][p_name] = proxy
         return proxy
 
 

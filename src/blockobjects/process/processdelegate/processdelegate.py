@@ -157,6 +157,16 @@ class ProcessDelegate(ContextualObjectInterface):
             state["_proxy_context"] = self._proxy_context
         return state
 
+    def __setstate__(self, state) -> dict[str, Any]:
+        """Builds this object based on a dictionary of corresponding attributes.
+
+        Args:
+            state: The attributes to build this object from.
+        """
+        if state.get("_proxy", None) is None:
+            state["_is_proxy"] = False
+        super().__setstate__(state)
+
     # Instance Methods #
     # Constructors/Destructors
     def construct(
