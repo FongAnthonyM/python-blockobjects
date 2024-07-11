@@ -1,4 +1,4 @@
-""" processdelegate.py.py
+""" processarbitrator.py
 
 """
 # Package Header #
@@ -23,30 +23,30 @@ from baseobjects.operations import iter_public_method_names
 # Local Packages #
 from ..interfaces import ProxyInterface, ContextualObjectInterface
 from ..context import BaseProcessingContext
-from .delegatemethod import delegatemethod
+from .arbitratemethod import arbitratemethod
 
 
 # Definitions #
 # Classes #
-class ProcessDelegate(ContextualObjectInterface):
-    """A base class for creating objects which delegate method calls to either the local or server copy of this object.
+class ProcessArbitrator(ContextualObjectInterface):
+    """A base class for creating objects which forward method calls to either the local or server copy of this object.
 
-    This class provides a structured way to manage and delegate method calls to server processes. It includes methods
+    This class provides a structured way to manage and forward method calls to server processes. It includes methods
     for starting and stopping servers, managing proxy contexts, and handling state synchronization between local and
     server objects. It is designed to work within a processing context, which allows for dynamic control over the
     implementation of the server process.
 
     Class Attributes:
-        public_exposed: Determines if public methods are exposed for delegation.
-        _exposed_: A private set of methods which are exposed for delegation.
-        exposed: A public set of methods which are exposed for delegation.
+        public_exposed: Determines if public methods are exposed for artbitration.
+        _exposed_: A private set of methods which are exposed for artbitration.
+        exposed: A public set of methods which are exposed for artbitration.
         _unexposed_: A private set of methods which only exist locally, cannot invoke server methods.
         unexposed: A public set of methods which only exist locally, cannot invoke server methods.
         _local_methods_: A private set of methods which run locally but can invoke server calls.
         local_methods: A public set of methods which run locally but can invoke server calls.
 
     Attributes:
-        _proxy_context: The processing context associated with this delegate.
+        _proxy_context: The processing context associated with this arbitrator.
         _untransmittable_: A private set of attribute names that should not be transmitted to the server with updates.
         untransmittable: A public set of attribute names that should not be transmitted to the server with updates.
         _is_proxy: Flag indicating if this object is executing on a server as proxy or locally not a proxy.
@@ -55,7 +55,7 @@ class ProcessDelegate(ContextualObjectInterface):
 
     Args:
         start_server: Determines whether the server should be started during construction.
-        proxy_context : The processing context to be used by this delegate.
+        proxy_context : The processing context to be used by this arbitrator.
         _state: A dictionary of attributes for initializing this object.
         init: Determine if the object should be constructed.
     """
@@ -105,14 +105,14 @@ class ProcessDelegate(ContextualObjectInterface):
             if func is None:
                 raise AttributeError(f"'{cls.__name__}' object has no method '{name}'")
             if (
-                not isinstance(func, delegatemethod) and
-                not isinstance(getattr(func, "__wrapped__", func), delegatemethod)
+                not isinstance(func, arbitratemethod) and
+                not isinstance(getattr(func, "__wrapped__", func), arbitratemethod)
             ):
                 if name in (cls._local_methods_ | cls.local_methods):
                     wrapper_method = "local_call"
                 else:
-                    wrapper_method = delegatemethod._wrapper_method
-                d_method = delegatemethod(func, wrapper_method=wrapper_method)
+                    wrapper_method = arbitratemethod._wrapper_method
+                d_method = arbitratemethod(func, wrapper_method=wrapper_method)
                 setattr(cls, name, d_method)
                 ignore.add(name)
         cls._exposed_done = ignore
@@ -218,7 +218,7 @@ class ProcessDelegate(ContextualObjectInterface):
 
     # Getters/Setters
     def get_attribute(self, name: str, default: Any = search_sentinel) -> Any:
-        """Get an attribute, delegated from either the local object or remote object.
+        """Get an attribute, artbitrated from either the local object or remote object.
 
         Args:
             name: The name of the attribute to get.
@@ -233,7 +233,7 @@ class ProcessDelegate(ContextualObjectInterface):
             return getattr(self, name)
 
     async def get_attribute_async(self, name: str, default: Any = search_sentinel) -> Any:
-        """Asynchronously get an attribute, delegated from either the local object or remote object.
+        """Asynchronously get an attribute, artbitrated from either the local object or remote object.
 
         Args:
             name: The name of the attribute to get.
@@ -248,7 +248,7 @@ class ProcessDelegate(ContextualObjectInterface):
             return getattr(self, name)
 
     def set_attribute(self, name: str, value: Any) -> None:
-        """Delegated setting of an attribute in either the local object or remote object.
+        """Artbitrated setting of an attribute in either the local object or remote object.
 
         Args:
             name: The name of the attribute to set.
@@ -257,7 +257,7 @@ class ProcessDelegate(ContextualObjectInterface):
         setattr(self, name, value)
 
     async def set_attribute_async(self, name: str, value: Any) -> None:
-        """Asynchronously delegated setting of an attribute in either the local object or remote object.
+        """Asynchronously artbitrated setting of an attribute in either the local object or remote object.
 
         Args:
             name: The name of the attribute to set.
@@ -266,7 +266,7 @@ class ProcessDelegate(ContextualObjectInterface):
         setattr(self, name, value)
 
     def _get_state(self, exclude: set | None = None) -> dict[str, Any]:
-        """Creates a dictionary of attributes, delegated from either the local object or remote object.
+        """Creates a dictionary of attributes, artbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -281,7 +281,7 @@ class ProcessDelegate(ContextualObjectInterface):
         return state
 
     def get_state(self, exclude: set | None = None) -> dict[str, Any]:
-        """Creates a dictionary of attributes, delegated from either the local object or remote object.
+        """Creates a dictionary of attributes, artbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -289,7 +289,7 @@ class ProcessDelegate(ContextualObjectInterface):
         return self._get_state(exclude)
 
     async def get_state_async(self, exclude: set | None = None) -> dict[str, Any]:
-        """Asynchronously, creates a dictionary of attributes, delegated from either the local object or remote object.
+        """Asynchronously, creates a dictionary of attributes, artbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -297,7 +297,7 @@ class ProcessDelegate(ContextualObjectInterface):
         return self._get_state(exclude)
 
     def _set_state(self, state: dict[str, Any]) -> None:
-        """Delegated building of either the local object or remote object from dictionary of attributes.
+        """Artbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -305,7 +305,7 @@ class ProcessDelegate(ContextualObjectInterface):
         self.__setstate__(state)
 
     def set_state(self, state: dict[str, Any]) -> None:
-        """Delegated building of either the local object or remote object from dictionary of attributes.
+        """Artbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -313,7 +313,7 @@ class ProcessDelegate(ContextualObjectInterface):
         self._set_state(state)
 
     async def set_state_async(self, state: dict[str, Any]) -> None:
-        """Asynchronously delegated building of either the local object or remote object from dictionary of attributes.
+        """Asynchronously artbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.

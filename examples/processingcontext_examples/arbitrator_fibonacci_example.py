@@ -1,12 +1,12 @@
-from blockobjects.process import ProcessDelegate, DEFAULT_PROCESS_CONTEXT
+from blockobjects.process import ProcessArbitrator, DEFAULT_PROCESS_CONTEXT
 
 
-class Printer(ProcessDelegate):
+class Printer(ProcessArbitrator):
     def print(self, a: int) -> None:
         print(a, end=" ")
 
 
-class Fibonacci(ProcessDelegate):
+class Fibonacci(ProcessArbitrator):
     def __init__(self, printer=None, **kwargs):
         self.printer = printer
         super().__init__(**kwargs)

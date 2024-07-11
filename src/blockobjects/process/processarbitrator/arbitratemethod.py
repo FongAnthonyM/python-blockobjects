@@ -1,4 +1,4 @@
-""" delegatemethod.py.py
+""" arbitratemethod.py
 
 """
 # Package Header #
@@ -23,9 +23,9 @@ from baseobjects.functions import BaseDecorator
 
 # Definitions #
 # Classes #
-class delegatemethod(BaseDecorator):
+class arbitratemethod(BaseDecorator):
     # Attributes #
-    _wrapper_method: str = "delegate_call"
+    _wrapper_method: str = "arbitrate_call"
     proxy_method: str | None = None
 
     # Magic Methods #
@@ -73,26 +73,26 @@ class delegatemethod(BaseDecorator):
         super().construct(func=func, *args, wrapper_method=wrapper_method, **kwargs)
 
     # Calling
-    def local_call(self, obj: "ProcessDelegate", *args: Any, **kwargs: Any) -> Any:
-        """Delegates a function call of an object to the local execution.
+    def local_call(self, obj: Any, *args: Any, **kwargs: Any) -> Any:
+        """Forwards a function call of an object to the local execution.
 
         Args:
-            obj: The object whose function call will be delegated.
-            *args: The arguments of function call being delegated.
-            **kwargs: The keyword arguments of function call being delegated.
+            obj: The object whose function call will be arbitrated.
+            *args: The arguments of function call being arbitrated.
+            **kwargs: The keyword arguments of function call being arbitrated.
 
         Returns:
             The result of the function call.
         """
         return self.__wrapped__(obj, *args, **kwargs)
 
-    def delegate_call(self, obj: "ProcessDelegate", *args: Any, **kwargs: Any) -> Any:
-        """Delegates a function call of an object to its corresponding remote server if it exists.
+    def arbitrate_call(self, obj: Any, *args: Any, **kwargs: Any) -> Any:
+        """Arbitrates if a function call should be invoked on the server or locally.
 
         Args:
-            obj: The object whose function call will be delegated.
-            *args: The arguments of function call being delegated.
-            **kwargs: The keyword arguments of function call being delegated.
+            obj: The object whose function call will be arbitrated.
+            *args: The arguments of function call being arbitrated.
+            **kwargs: The keyword arguments of function call being arbitrated.
 
         Returns:
             The result of the function call.

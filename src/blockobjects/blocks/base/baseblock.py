@@ -28,7 +28,7 @@ from warnings import warn
 # Third-Party Packages #
 from baseobjects import BaseMethod
 from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
-from ...process import ProcessDelegate, delegatemethod
+from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
@@ -37,7 +37,7 @@ from ...io import DelegatingIOManager, IdentifiedItem
 
 # Definitions #
 # Classes #
-class BaseBlock(ProcessDelegate, CallableMultiplexObject):
+class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     """An abstract class which defines a Block, an easily definable data processing block with inputs and outputs.
 
     In subclasses the "evaluate" method must be defined as it is data processing element of this object. Additionally,

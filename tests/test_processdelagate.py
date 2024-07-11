@@ -26,7 +26,7 @@ import pytest
 from src.blockobjects.process import DEFAULT_PROCESS_CONTEXT
 from src.blockobjects.process.context import ManagerContext
 from src.blockobjects.process.context.multiprocessingcontext import MultiProcessingContext
-from src.blockobjects.process.processdelegate import ProcessDelegate
+from src.blockobjects.process.processarbitrator import ProcessArbitrator
 from .test_bases import ClassTest
 
 
@@ -206,8 +206,8 @@ class BaseProcessDelegateTest(ClassTest):
 
 class TestProcessDelegate(BaseProcessDelegateTest):
 
-    class ExampleOne(BaseProcessDelegateTest.BaseExampleOne, ProcessDelegate):
-        """A mixin class that is a ProcessDelegate and example class for testing."""
+    class ExampleOne(BaseProcessDelegateTest.BaseExampleOne, ProcessArbitrator):
+        """A mixin class that is a ProcessArbitrator and example class for testing."""
 
     context_type = MultiProcessingContext
 

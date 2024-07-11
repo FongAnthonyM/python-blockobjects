@@ -21,7 +21,7 @@ from weakref import ref
 
 # Third-Party Packages #
 from baseobjects import BaseMethod
-from ...process import ProcessDelegate, delegatemethod
+from ...process import ProcessArbitrator, arbitratemethod
 
 # Local Packages #
 from .contextualiomanager import ContextualIOManager
@@ -29,7 +29,7 @@ from .contextualiomanager import ContextualIOManager
 
 # Definitions #
 # Classes #
-class DelegatingIOManager(ContextualIOManager, ProcessDelegate):
+class DelegatingIOManager(ContextualIOManager, ProcessArbitrator):
     """An IO object which maps named inputs to names outputs in a one-to-one manner.
 
     Class Attributes:

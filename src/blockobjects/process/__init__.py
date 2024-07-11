@@ -15,8 +15,8 @@ __email__ = __email__
 # Local Packages #
 from .interfaces import *
 from .context import *
-from .processdelegate import *
+from .processarbitrator import *
 
 
 # Defaults #
-ProcessDelegate._proxy_context = DEFAULT_PROCESS_CONTEXT
+ProcessArbitrator._proxy_context = DEFAULT_PROCESS_CONTEXT

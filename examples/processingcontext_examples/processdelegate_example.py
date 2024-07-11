@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """ processdelegate_example.py
-An example of how to use the ProcessDelegate class.
+An example of how to use the ProcessArbitrator class.
 """
 # Imports #
 # Standard Libraries #
 from os import getpid
 
 # Third-Party Packages #
-from blockobjects.process import DEFAULT_PROCESS_CONTEXT, ProcessDelegate
+from blockobjects.process import DEFAULT_PROCESS_CONTEXT, ProcessArbitrator
 
 
 # Definitions #
 # Classes #
-class ProcessDelegateExample(ProcessDelegate):
+class ProcessArbitratorExample(ProcessArbitrator):
     # Class Attributes #
     public_exposed = True  # Setting this was unnecessary but illustrates its use
     exposed = {"_available"}
@@ -85,7 +85,7 @@ def method_execution_overview():
     print(f"Method Execution Overview: \n")
 
     # Create Process Delegate
-    delegate = ProcessDelegateExample(2)
+    delegate = ProcessArbitratorExample(2)
 
     # Local Calls #
     pid = delegate.running_pid()
@@ -147,7 +147,7 @@ def delegate_state_overview():
     print(f"Delegate State Overview: \n")
 
     # Create Process Delegate
-    delegate = ProcessDelegateExample(2, secret=-1)
+    delegate = ProcessArbitratorExample(2, secret=-1)
 
     # Check Values
     print(f"Default Values:")
