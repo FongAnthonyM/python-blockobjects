@@ -3,8 +3,6 @@
 """ test_baseblock.py
 Test for the baseobjects package.
 """
-from typing import Any
-
 # Package Header #
 from src.blockobjects.header import *
 
@@ -18,6 +16,7 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from asyncio import sleep, run
+from typing import Any
 
 # Third-Party Packages #
 import pytest

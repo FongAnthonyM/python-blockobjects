@@ -1,5 +1,5 @@
 """ managercontext.py
-A context which manages multiple contexts and delegates its context functionality to a selected context.
+A context which manages multiple contexts and arbitrates its context functionality to a selected context.
 """
 # Package Header #
 from ....header import *
@@ -25,7 +25,7 @@ from ..contextualobjects import ContextualLock, ContextualEvent, ContextualQueue
 # Definitions #
 # Classes #
 class ManagerContext(BaseProcessingContext):
-    """A context which manages multiple contexts and delegates its context functionality to a selected context.
+    """A context which manages multiple contexts and arbitrates its context functionality to a selected context.
 
     Attributes:
         lock_type: The type of lock to create when creating locks.
@@ -34,12 +34,12 @@ class ManagerContext(BaseProcessingContext):
         simple_queue_type: The type of simple queue to create when creating simple queues.
 
         contexts: The process contexts to manage.
-        context: The selected context to delegate functionality to.
-        selected: The key name of the context to delegate functionality to.
+        context: The selected context to arbitrate functionality to.
+        selected: The key name of the context to arbitrate functionality to.
 
     Args:
         contexts: The process contexts to manage.
-        select: The key name of the context which this manager context will delegate to.
+        select: The key name of the context which this manager context will arbitrate to.
         init: Determines if this object will construct.
     """
     # Attributes  #
@@ -82,7 +82,7 @@ class ManagerContext(BaseProcessingContext):
 
         Args:
             contexts: The process context to manage.
-            select: The key name of the context which this manager context will delegate to.
+            select: The key name of the context which this manager context will arbitrate to.
         """
         if contexts is not None:
             self.contexts.update(contexts)
@@ -94,10 +94,10 @@ class ManagerContext(BaseProcessingContext):
 
     # Context Management
     def select_context(self, name: str, update: bool = False) -> None:
-        """Selects a contained context as the context which this manager context will delegate to.
+        """Selects a contained context as the context which this manager context will arbitrate to.
 
         Args:
-            name: The key name of the context which this manager context will delegate to.
+            name: The key name of the context which this manager context will arbitrate to.
             update: Determines whether the contained objects will change to the new context. Defaults to False
         """
         self.context = self.contexts[name]

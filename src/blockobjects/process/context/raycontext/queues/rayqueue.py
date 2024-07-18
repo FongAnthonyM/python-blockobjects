@@ -216,7 +216,7 @@ class RayQueue(QueueInterface):
         get(self._remote_queue.join_async.remote())
 
     async def join_async(self, interval: float = 0.0) -> None:
-        """Asynchronously, blocks until all items in the Queue have been gotten and the registry is updated.
+        """Asynchronously, blockgroup until all items in the Queue have been gotten and the registry is updated.
 
         Args:
             interval: The time, in seconds, between each queue check.

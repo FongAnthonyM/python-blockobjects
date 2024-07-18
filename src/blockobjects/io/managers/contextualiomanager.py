@@ -1,4 +1,4 @@
-""" delegatingiomanager.py
+""" arbitratingiomanager.py
 An IO object which maps named inputs to names outputs in a one-to-one manner.
 """
 # Package Header #
@@ -20,7 +20,7 @@ from typing import ClassVar, Any
 from ...process import BaseProcessingContext, AsyncContext, ManagerContext, DEFAULT_PROCESS_CONTEXT
 
 # Local Packages #
-from ..base import IOMap, BaseIO, BaseIOMultiplexer, IODelegator, IOWrapper
+from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
 from ..containers import IOQueue
 from .baseiomanager import BaseIOManager
 

@@ -4,9 +4,6 @@
 An example of how to use the processing contexts.
 """
 # Imports #
-# Standard Libraries #
-
-
 # Third-Party Packages #
 from blockobjects.process import ManagerContext, AsyncContext, MultiProcessingContext
 from blockobjects.process import ContextualQueue
@@ -69,14 +66,14 @@ def manager_contexts():
     spawned_queue = manager_context.create_queue()
     print(f"Queue Type Spawned: {type(spawned_queue).__name__}")
 
-    # Given that the queue is a ContextualQueue, we can check which queue it is delegating to
+    # Given that the queue is a ContextualQueue, we can check which queue it is arbitrating to
     inner_queue = spawned_queue.queue
-    print(f"Queue Delegating to: {type(inner_queue).__name__}")
+    print(f"Queue Arbitrating to: {type(inner_queue).__name__}")
 
     # Alternatively, when a Contextual Object is created, it can be provided a context
     new_queue = ContextualQueue(context=manager_context)
     print(f"New ContextualQueue: {new_queue.context is manager_context}")
-    # This does mean that Contextual Objects will delegate to another Contextual Object
+    # This does mean that Contextual Objects will arbitrate to another Contextual Object
     print(f"ContextualQueue Inner Type: {type(new_queue.queue).__name__}")
     print(f"ContextualQueue Inner Inner Type: {type(new_queue.queue.queue).__name__}")
     # This can be useful for creating layers of contexts for dynamically creating conditions for specific contexts

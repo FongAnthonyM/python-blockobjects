@@ -32,7 +32,7 @@ from .test_bases import ClassTest
 
 # Definitions #
 # Classes #
-class BaseProcessDelegateTest(ClassTest):
+class BaseProcessArbitrateTest(ClassTest):
     class BaseExampleOne:
 
         # Class Attributes #
@@ -88,10 +88,10 @@ class BaseProcessDelegateTest(ClassTest):
         else:
             return self.create_manger_context()
 
-    def create_local_processdelegate(self):
+    def create_local_processarbitrate(self):
         return self.ExampleOne(context=self.create_manger_context())
 
-    def create_proxy_processdelegate(self):
+    def create_proxy_processarbitrate(self):
         proxy = self.ExampleOne(start_server=True, context=self.create_manger_context())
         return proxy
 
@@ -99,114 +99,114 @@ class BaseProcessDelegateTest(ClassTest):
     def test_context(self, request):
         return request.param(self)
 
-    @pytest.fixture(params=[create_local_processdelegate, create_proxy_processdelegate])
-    def test_processdelegate(self, request):
+    @pytest.fixture(params=[create_local_processarbitrate, create_proxy_processarbitrate])
+    def test_processarbitrate(self, request):
         return request.param(self)
 
-    def test_create_local_delegate(self):
-        delegate = self.ExampleOne(context=self.create_manger_context())
-        assert delegate is not None
+    def test_create_local_arbitrate(self):
+        arbitrate = self.ExampleOne(context=self.create_manger_context())
+        assert arbitrate is not None
 
     def test_start_server(self):
-        delegate = self.ExampleOne(context=self.create_manger_context())
-        delegate.start_server()
+        arbitrate = self.ExampleOne(context=self.create_manger_context())
+        arbitrate.start_server()
 
-        assert delegate.is_proxy()
-        assert delegate.is_alive()
+        assert arbitrate.is_proxy()
+        assert arbitrate.is_alive()
 
-        delegate.stop_server()
+        arbitrate.stop_server()
 
     def test_stop_server(self):
-        delegate = self.ExampleOne(context=self.create_manger_context())
-        delegate.start_server()
+        arbitrate = self.ExampleOne(context=self.create_manger_context())
+        arbitrate.start_server()
 
-        assert delegate.is_proxy()
-        assert delegate.is_alive()
+        assert arbitrate.is_proxy()
+        assert arbitrate.is_alive()
 
-        delegate.stop_server()
+        arbitrate.stop_server()
 
-        assert not delegate.is_proxy()
-        assert not delegate.is_alive()
+        assert not arbitrate.is_proxy()
+        assert not arbitrate.is_alive()
 
     def test_start_server_init(self):
-        delegate = self.ExampleOne(start_server=True, context=self.create_manger_context())
-        assert delegate.is_proxy()
-        assert delegate.is_alive()
+        arbitrate = self.ExampleOne(start_server=True, context=self.create_manger_context())
+        assert arbitrate.is_proxy()
+        assert arbitrate.is_alive()
 
-        delegate.stop_server()
+        arbitrate.stop_server()
 
-        assert not delegate.is_proxy()
-        assert not delegate.is_alive()
+        assert not arbitrate.is_proxy()
+        assert not arbitrate.is_alive()
 
-    def test_processdelegate_call(self, test_processdelegate):
-        if test_processdelegate.is_proxy():
-            assert test_processdelegate.running_pid() != getpid()
+    def test_processarbitrate_call(self, test_processarbitrate):
+        if test_processarbitrate.is_proxy():
+            assert test_processarbitrate.running_pid() != getpid()
         else:
-            assert test_processdelegate.running_pid() == getpid()
+            assert test_processarbitrate.running_pid() == getpid()
 
-    def test_exposed_call(self, test_processdelegate):
-        assert test_processdelegate._available() == "available"
+    def test_exposed_call(self, test_processarbitrate):
+        assert test_processarbitrate._available() == "available"
 
-    def test_unexposed_calls(self, test_processdelegate):
-        assert test_processdelegate._unavailable() == getpid()
-        assert test_processdelegate.unavailable() == getpid()
+    def test_unexposed_calls(self, test_processarbitrate):
+        assert test_processarbitrate._unavailable() == getpid()
+        assert test_processarbitrate.unavailable() == getpid()
 
-    async def quick_async(self, test_processdelegate):
-        answer = await test_processdelegate.quick_async()
+    async def quick_async(self, test_processarbitrate):
+        answer = await test_processarbitrate.quick_async()
         assert answer == "fast"
 
-    def test_quick_async(self, test_processdelegate):
-        run(self.quick_async(test_processdelegate))
+    def test_quick_async(self, test_processarbitrate):
+        run(self.quick_async(test_processarbitrate))
 
-    async def active_async(self, test_processdelegate):
-        future = test_processdelegate.active_async()
+    async def active_async(self, test_processarbitrate):
+        future = test_processarbitrate.active_async()
         if hasattr(future, "done"):
             assert not future.done()
         answer = await future
         assert answer == "active"
 
-    def test_active_async(self, test_processdelegate):
-        run(self.active_async(test_processdelegate))
+    def test_active_async(self, test_processarbitrate):
+        run(self.active_async(test_processarbitrate))
 
-    def test_get_attribute(self, test_processdelegate):
-        assert test_processdelegate.get_attribute("one") == 1
-        assert test_processdelegate.get_attribute("one", None) == 1
-        assert test_processdelegate.get_attribute("none", None) is None
+    def test_get_attribute(self, test_processarbitrate):
+        assert test_processarbitrate.get_attribute("one") == 1
+        assert test_processarbitrate.get_attribute("one", None) == 1
+        assert test_processarbitrate.get_attribute("none", None) is None
         try:
-            test_processdelegate.get_attribute("none")
+            test_processarbitrate.get_attribute("none")
         except AttributeError:
             assert True
         else:
             assert False, "Should throw an AttributeError"
 
-    def test_set_attribute(self, test_processdelegate):
-        test_processdelegate.set_attribute("item", 1000)
-        assert test_processdelegate.get_attribute("item") == 1000
+    def test_set_attribute(self, test_processarbitrate):
+        test_processarbitrate.set_attribute("item", 1000)
+        assert test_processarbitrate.get_attribute("item") == 1000
 
     def test_init_state_passing(self):
-        delegate = self.ExampleOne(one=2, context=self.create_manger_context())
-        delegate.start_server()
-        assert delegate.get_attribute("one") == 2
+        arbitrate = self.ExampleOne(one=2, context=self.create_manger_context())
+        arbitrate.start_server()
+        assert arbitrate.get_attribute("one") == 2
 
     def test_stop_state_passing(self):
-        delegate = self.ExampleOne(context=self.create_manger_context())
-        delegate.start_server()
-        delegate.set_attribute("item", 2)
-        delegate.stop_server()
-        assert delegate.item == 2
+        arbitrate = self.ExampleOne(context=self.create_manger_context())
+        arbitrate.start_server()
+        arbitrate.set_attribute("item", 2)
+        arbitrate.stop_server()
+        assert arbitrate.item == 2
 
     def test_update_server(self):
-        delegate = self.ExampleOne(context=self.create_manger_context())
-        delegate.start_server()
-        delegate.item = 2
-        delegate.update_server()
-        assert delegate.get_attribute("item") == 2
-        delegate.stop_server()
+        arbitrate = self.ExampleOne(context=self.create_manger_context())
+        arbitrate.start_server()
+        arbitrate.item = 2
+        arbitrate.update_server()
+        assert arbitrate.get_attribute("item") == 2
+        arbitrate.stop_server()
 
 
-class TestProcessDelegate(BaseProcessDelegateTest):
+class TestProcessArbitrate(BaseProcessArbitrateTest):
 
-    class ExampleOne(BaseProcessDelegateTest.BaseExampleOne, ProcessArbitrator):
+    class ExampleOne(BaseProcessArbitrateTest.BaseExampleOne, ProcessArbitrator):
         """A mixin class that is a ProcessArbitrator and example class for testing."""
 
     context_type = MultiProcessingContext

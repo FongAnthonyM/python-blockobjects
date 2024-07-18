@@ -1,4 +1,4 @@
-""" delegatingiomanager.py
+""" arbitratingiomanager.py
 An IO object which maps named inputs to names outputs in a one-to-one manner.
 """
 # Package Header #

@@ -32,7 +32,7 @@ from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import BaseIO, DelegatingIOManager, IOWrapper, IORouter
+from ...io import BaseIO, ArbitratingIOManager, IOWrapper, IORouter
 from .baseblock import BaseBlock
 
 
@@ -75,12 +75,12 @@ class BlockGroup(BaseBlock):
         "create_blocks_async",
         "link_inner_io",
         "link_inner_io_async",
-        "build_delegated_inputs",
-        "build_delegated_inputs_async",
-        "get_delegated_io",
-        "get_delegated_io_async",
-        "put_delegated_io",
-        "put_delegated_io_async",
+        "build_arbitrated_inputs",
+        "build_arbitrated_inputs_async",
+        "get_arbitrated_io",
+        "get_arbitrated_io_async",
+        "put_arbitrated_io",
+        "put_arbitrated_io_async",
     }
 
     init_blocks: ClassVar[bool] = True
@@ -97,7 +97,7 @@ class BlockGroup(BaseBlock):
     wrapped_getter_async: str | None = None
     wrapped_putter: str | None = "put_to_io"
     wrapped_putter_async: str | None = "put_to_io_async"
-    delegated_io: dict[str, IOWrapper]
+    arbitrated_io: dict[str, IOWrapper]
 
     create_links_kwargs: dict[str, Any] = {}
 
@@ -126,7 +126,7 @@ class BlockGroup(BaseBlock):
         **kwargs: Any,
     ) -> None:
         # New Attributes #
-        self.delegated_io = {}
+        self.arbitrated_io = {}
 
         self.create_links_kwargs = self.create_links_kwargs.copy()
 
@@ -225,12 +225,12 @@ class BlockGroup(BaseBlock):
 
     # Blocks
     def create_blocks(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Creates the inner blocks.
+        """Creates the inner blockgroup.
 
         Args:
-            *args: The arguments for creating the inner blocks.
-            override: Determines if the inner blocks will be overridden.
-            **kwargs: The keyword arguments for creating the inner blocks.
+            *args: The arguments for creating the inner blockgroup.
+            override: Determines if the inner blockgroup will be overridden.
+            **kwargs: The keyword arguments for creating the inner blockgroup.
         """
 
     async def create_blocks_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
@@ -269,12 +269,12 @@ class BlockGroup(BaseBlock):
 
     # IO
     def build_inner_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Builds the inner blocks' IO with new routing to properly link with other blocks' IO.
+        """Builds the inner blockgroup' IO with new routing to properly link with other blockgroup' IO.
 
         Args:
-            *args: The arguments for creating the inner blocks.
-            override: Determines if the inner blocks will be overridden.
-            **kwargs: The keyword arguments for creating the inner blocks.
+            *args: The arguments for creating the inner blockgroup.
+            override: Determines if the inner blockgroup will be overridden.
+            **kwargs: The keyword arguments for creating the inner blockgroup.
         """
 
     async def build_inner_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
@@ -291,11 +291,11 @@ class BlockGroup(BaseBlock):
             self.sets_up_inner_io = False
 
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
-        """Links the inner blocks' IO.
+        """Links the inner blockgroup' IO.
 
         Args:
-            *args: The arguments for creating linking the inner blocks' IO.
-            **kwargs: The keyword arguments for creating linking the inner blocks' IO.
+            *args: The arguments for creating linking the inner blockgroup' IO.
+            **kwargs: The keyword arguments for creating linking the inner blockgroup' IO.
         """
 
     async def link_inner_io_async(self, *args: Any, **kwargs: Any) -> Any:
@@ -349,13 +349,6 @@ class BlockGroup(BaseBlock):
     async def start_inner_io_async(self) -> None:
         await gather(*(block.start_io_async() for block in self.blocks.values()))
 
-    def materialize_inner_io(self) -> None:
-        for block in self.blocks.values():
-            block.materialize_io()
-
-    async def materialize_inner_io_async(self) -> None:
-        await gather(*(block.materialize_io_async() for block in self.blocks.values()))
-
     def actualize_inner_io(self) -> None:
         for block in self.blocks.values():
             block.actualize_io()
@@ -363,82 +356,82 @@ class BlockGroup(BaseBlock):
     async def actualize_inner_io_async(self) -> None:
         await gather(*(block.actualize_io_async() for block in self.blocks.values()))
 
-    def _build_inner_delegated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
+    def _build_inner_arbitrated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
         for key, other in io_router.get_links_to().items():
             _, source, other_id, destination = key
             other_io = io_router[source]
             if (io_ := inner_io.get(other_id, None)) is not None and (not other.is_proxy() and not other.will_proxy):
-                self.delegated_io[key] = io_.create_io_wrapper(destination)
+                self.arbitrated_io[key] = io_.create_io_wrapper(destination)
                 scheduled_listeners = io_.scheduled_listener_links
                 if key in scheduled_listeners:
                     scheduled_listeners.discard(key)
             elif isinstance(other_io, IORouter):
-                self._build_inner_delegated_io(other_io, inner_io)
+                self._build_inner_arbitrated_io(other_io, inner_io)
 
-    async def _build_inner_delegated_io_async(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
+    async def _build_inner_arbitrated_io_async(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
         links_to = await io_router.get_links_to_async()
         inner_coros = deque()
         for key, other in links_to.items():
             _, source, other_id, destination = key
             other_io = io_router[source]
             if (io_ := inner_io.get(other_id, None)) is not None and (not other.is_proxy() and not other.will_proxy):
-                self.delegated_io[key] = io_.create_io_wrapper(destination)
+                self.arbitrated_io[key] = io_.create_io_wrapper(destination)
                 scheduled_listeners = io_.scheduled_listener_links
                 if key in scheduled_listeners:
                     scheduled_listeners.discard(key)
             elif isinstance(other_io, IORouter):
-                inner_coros.append(self._build_inner_delegated_io_async(other_io, inner_io))
+                inner_coros.append(self._build_inner_arbitrated_io_async(other_io, inner_io))
         await gather(*inner_coros)
 
-    def build_delegated_inputs(self) -> None:
-        self._build_inner_delegated_io(self.inputs, self.get_inner_io_id())
+    def build_arbitrated_inputs(self) -> None:
+        self._build_inner_arbitrated_io(self.inputs, self.get_inner_io_id())
 
-    async def build_delegated_inputs_async(self) -> None:
-        await self._build_inner_delegated_io_async(self.inputs, await self.get_inner_io_id_async())
+    async def build_arbitrated_inputs_async(self) -> None:
+        await self._build_inner_arbitrated_io_async(self.inputs, await self.get_inner_io_id_async())
 
-    def get_delegated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
-        self.delegated_io[key].get(value, *args, **kwargs)
+    def get_arbitrated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
+        self.arbitrated_io[key].get(value, *args, **kwargs)
 
-    async def get_delegated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
-        await self.delegated_io[key].get_async(value, *args, **kwargs)
+    async def get_arbitrated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
+        await self.arbitrated_io[key].get_async(value, *args, **kwargs)
 
-    def put_delegated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
-        self.delegated_io[key].put(value, *args, **kwargs)
+    def put_arbitrated_io(self, key, value, *args: Any, **kwargs: Any) -> None:
+        self.arbitrated_io[key].put(value, *args, **kwargs)
 
-    async def put_delegated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
-        await self.delegated_io[key].put_async(value, *args, **kwargs)
+    async def put_arbitrated_io_async(self, key, value, *args: Any, **kwargs: Any) -> None:
+        await self.arbitrated_io[key].put_async(value, *args, **kwargs)
 
-    def _create_delegate_io_proxy_partial(self, part: partial, key: tuple) -> partial:
-        """Creates a partial function which calls a proxy's delegate_io method with the link key fixed.
+    def _create_arbitrate_io_proxy_partial(self, part: partial, key: tuple) -> partial:
+        """Creates a partial function which calls a proxy's arbitrate_io method with the link key fixed.
 
         This is a helper method used to create a flattened partial method using the original partial method -
-        delegate_io - and the additional arguments need to have a fixed key. Since, at the time of writing, partial
+        arbitrate_io - and the additional arguments need to have a fixed key. Since, at the time of writing, partial
         does not flatten properly when chained.
 
         Args:
-            part: The original partial proxy delegate_io method that needs the key to be fixed.
-            key: The key used for delegating the IO.
+            part: The original partial proxy arbitrate_io method that needs the key to be fixed.
+            key: The key used for arbitrating the IO.
 
         Returns:
-            A new partial proxy delegate_io method with the key fixed.
+            A new partial proxy arbitrate_io method with the key fixed.
         """
         return partial(part.func.__func__, self._proxy, *part.args, key, **part.keywords)
 
-    def create_delegate_io_wrapper(self, key: tuple) -> IOWrapper:
+    def create_arbitrate_io_wrapper(self, key: tuple) -> IOWrapper:
         if self.is_alive():
-            getter = self._create_delegate_io_proxy_partial(self._proxy.get_delegated_io, key)
-            getter_async = self._create_delegate_io_proxy_partial(self._proxy.get_delegated_io_async, key)
-            putter = self._create_delegate_io_proxy_partial(self._proxy.put_delegated_io, key)
-            putter_async = self._create_delegate_io_proxy_partial(self._proxy.put_delegated_io_async, key)
+            getter = self._create_arbitrate_io_proxy_partial(self._proxy.get_arbitrated_io, key)
+            getter_async = self._create_arbitrate_io_proxy_partial(self._proxy.get_arbitrated_io_async, key)
+            putter = self._create_arbitrate_io_proxy_partial(self._proxy.put_arbitrated_io, key)
+            putter_async = self._create_arbitrate_io_proxy_partial(self._proxy.put_arbitrated_io_async, key)
         else:
-            getter = partial(self.get_delegated_io, key)
-            getter_async = partial(self.get_delegated_io_async, key)
-            putter = partial(self.put_delegated_io, key)
-            putter_async = partial(self.put_delegated_io_async, key)
+            getter = partial(self.get_arbitrated_io, key)
+            getter_async = partial(self.get_arbitrated_io_async, key)
+            putter = partial(self.put_arbitrated_io, key)
+            putter_async = partial(self.put_arbitrated_io_async, key)
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
-    def _set_delegated_io_links(
+    def _set_arbitrated_io_links(
         self,
         io_router: IORouter,
         inner_io: dict[int, IORouter],
@@ -450,11 +443,11 @@ class BlockGroup(BaseBlock):
             inner_keys = keys + (source,)
             other_io = io_router[source]
             if other_id in inner_io and (not other.is_proxy() and not other.will_proxy):
-                top_io.set_recursive(inner_keys, self.create_delegate_io_wrapper(key))
+                top_io.set_recursive(inner_keys, self.create_arbitrate_io_wrapper(key))
             elif isinstance(other_io, IORouter):
-                self._set_delegated_io_links(other_io, inner_io, top_io, inner_keys)
+                self._set_arbitrated_io_links(other_io, inner_io, top_io, inner_keys)
 
-    async def _set_delegated_io_links_async(
+    async def _set_arbitrated_io_links_async(
         self,
         io_router: IORouter,
         inner_io: dict[int, IORouter],
@@ -468,24 +461,24 @@ class BlockGroup(BaseBlock):
             inner_keys = keys + (source,)
             other_io = io_router[source]
             if other_id in inner_io and (not other.is_proxy() and not other.will_proxy):
-                inner_coros.append(top_io.set_recursive_async(inner_keys, self.create_delegate_io_wrapper(key)))
+                inner_coros.append(top_io.set_recursive_async(inner_keys, self.create_arbitrate_io_wrapper(key)))
             elif isinstance(other_io, IORouter):
-                inner_coros.append(self._set_delegated_io_links_async(other_io, inner_io, top_io, inner_keys))
+                inner_coros.append(self._set_arbitrated_io_links_async(other_io, inner_io, top_io, inner_keys))
         await gather(*inner_coros)
 
-    def set_delegated_input_links(self) -> None:
-        self._set_delegated_io_links(self.inputs, self.get_inner_io_id(), self.inputs, ())
+    def set_arbitrated_input_links(self) -> None:
+        self._set_arbitrated_io_links(self.inputs, self.get_inner_io_id(), self.inputs, ())
 
-    async def set_delegated_input_links_async(self) -> None:
-        await self._set_delegated_io_links_async(self.inputs, await self.get_inner_io_id_async(), self.inputs, ())
+    async def set_arbitrated_input_links_async(self) -> None:
+        await self._set_arbitrated_io_links_async(self.inputs, await self.get_inner_io_id_async(), self.inputs, ())
 
     def correct_input_links(self, *args: Any, **kwargs: Any) -> None:
-        self.build_delegated_inputs()
-        self.set_delegated_input_links()
+        self.build_arbitrated_inputs()
+        self.set_arbitrated_input_links()
 
     async def correct_input_links_async(self, *args: Any, **kwargs: Any) -> None:
-        await self.build_delegated_inputs_async()
-        await self.set_delegated_input_links_async()
+        await self.build_arbitrated_inputs_async()
+        await self.set_arbitrated_input_links_async()
 
     def finalize_io(self) -> None:
         self.correct_input_links()
@@ -607,7 +600,7 @@ class BlockGroup(BaseBlock):
         s_kwargs: dict[str, Any] | None = None,
         finalize: bool = True,
     ) -> None:
-        """Starts the continuous execution of the block, delegating to another process if selected.
+        """Starts the continuous execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
@@ -644,7 +637,7 @@ class BlockGroup(BaseBlock):
         s_kwargs: dict[str, Any] | None = None,
         finalize: bool = True,
     ) -> None:
-        """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
+        """Asynchronously starts the continuous execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.

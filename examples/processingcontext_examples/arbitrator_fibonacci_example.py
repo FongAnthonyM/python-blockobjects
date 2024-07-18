@@ -1,6 +1,15 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+""" arbitrator_fibonacci_example.py
+An example of how to use the xts.
+"""
+# Imports #
+# Third-Party Packages #
 from blockobjects.process import ProcessArbitrator, DEFAULT_PROCESS_CONTEXT
 
 
+# Definitions #
+# Classes #
 class Printer(ProcessArbitrator):
     def print(self, a: int) -> None:
         print(a, end=" ")

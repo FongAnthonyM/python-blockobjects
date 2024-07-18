@@ -79,12 +79,12 @@ class GroupOne(BlockGroup):
         override: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Creates the inner blocks.
+        """Creates the inner blockgroup.
 
         Args:
-            *args: The arguments for creating the inner blocks.
-            override: Determines if the inner blocks will be overridden.
-            **kwargs: The keyword arguments for creating the inner blocks.
+            *args: The arguments for creating the inner blockgroup.
+            override: Determines if the inner blockgroup will be overridden.
+            **kwargs: The keyword arguments for creating the inner blockgroup.
         """
         if override or "block_1" not in self.blocks:
             self.blocks["block_1"] = ExampleOne(will_proxy=first_proxy)
@@ -94,11 +94,11 @@ class GroupOne(BlockGroup):
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
-        """Links the inner blocks' IO.
+        """Links the inner blockgroup' IO.
 
         Args:
-            *args: The arguments for creating linking the inner blocks' IO.
-            **kwargs: The keyword arguments for creating linking the inner blocks' IO.
+            *args: The arguments for creating linking the inner blockgroup' IO.
+            **kwargs: The keyword arguments for creating linking the inner blockgroup' IO.
         """
         block_1 = self.blocks["block_1"]
         block_2 = self.blocks["block_2"]

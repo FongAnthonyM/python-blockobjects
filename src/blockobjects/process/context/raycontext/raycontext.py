@@ -14,7 +14,6 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from typing import Any
-from weakref import ref
 
 # Third-Party Packages #
 from baseobjects.functions import BaseDecorator
@@ -115,6 +114,6 @@ class RayContext(BaseProcessingContext):
 
         proxy = c_cls.new_actor_proxy(cls, a_cls, args, kwargs=kwargs, exposed=exposed)
 
-        self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = ref(proxy)
+        self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = proxy
         return proxy
 

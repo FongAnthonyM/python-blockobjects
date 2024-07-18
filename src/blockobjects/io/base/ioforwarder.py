@@ -1,10 +1,10 @@
-""" iodelegator.py
-IODelegator delegates IO to another IO object. It is essentially a wrapper for other IO Objects, but it can change which
+""" ioforwarder.py
+IOForwarder forwards IO to another IO object. It is essentially a wrapper for other IO Objects, but it can change which
 IO Object it is wrapping at any time. This is useful for changing the routing of the IO data during runtime. The two
 main uses of this type of routing redirection is to either change routing due to state change in the system and/or
-refactor the IO routing to more direct links. IODelegator is primarily intended to be used to refactor the IO routing as
+refactor the IO routing to more direct links. IOForwarder is primarily intended to be used to refactor the IO routing as
 it reduces the overhead of passing data between multiple IO Objects, especially when the data is being passed linearly.
-While IODelegator can be used to redirect routing due to state changes, this is not advised since it can be difficult to
+While IOForwarder can be used to redirect routing due to state changes, this is not advised since it can be difficult to
 track the routing of the data. IORouter should be used for routing redirection instead, because it is designed to handle
 complex routing redirection.
 """
@@ -30,23 +30,23 @@ from .baseio import BaseIO
 
 # Definitions #
 # Classes #
-class IODelegator(BaseIO):
-    """An IO Object which delegates IO to another IO Object.
+class IOForwarder(BaseIO):
+    """An IO Object which forwards IO to another IO Object.
 
-    IODelegator is a wrapper for other IO Objects, but it can change which IO Object it is wrapping at any time. This is
+    IOForwarder is a wrapper for other IO Objects, but it can change which IO Object it is wrapping at any time. This is
     useful for changing the routing of the IO data during runtime. The two main uses of this type of routing redirection
     is to either change routing due to state change in the system and/or refactor the IO routing to more direct links.
-    IODelegator is primarily intended to be used to refactor the IO routing as it reduces the overhead of passing data
-    between multiple IO Objects, especially when the data is being passed linearly. While IODelegator can be used to
+    IOForwarder is primarily intended to be used to refactor the IO routing as it reduces the overhead of passing data
+    between multiple IO Objects, especially when the data is being passed linearly. While IOForwarder can be used to
     redirect routing due to state changes, this is not advised since it can be difficult to track the routing of the
     data. IORouter should be used for routing redirection instead, because it is designed to handle complex routing
     redirection.
 
     Attributes:
-        io: The IO object to delegate to.
+        io: The IO object to arbitrate to.
 
     Args:
-        io_: The IO object to delegate to.
+        io_: The IO object to arbitrate to.
         *args: Arguments for inheritance.
         **kwargs: Keyword arguments for inheritance.
     """
@@ -65,12 +65,12 @@ class IODelegator(BaseIO):
 
     # IO
     def get_last_io(self) -> BaseIO | None:
-        """Recursively gets the last IO Object which is not an IODelegator.
+        """Recursively gets the last IO Object which is not an IOForwarder.
 
         Returns:
-            An IO object which is not an IODelegator.
+            An IO object which is not an IOForwarder.
         """
-        return self.io.get_last_io() if isinstance(self.io, IODelegator) else self.io
+        return self.io.get_last_io() if isinstance(self.io, IOForwarder) else self.io
 
     # Get
     def get(self, *args: Any, **kwargs: Any) -> Any:

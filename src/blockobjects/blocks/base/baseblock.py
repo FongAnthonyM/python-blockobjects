@@ -32,7 +32,7 @@ from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import DelegatingIOManager, IdentifiedItem
+from ...io import ArbitratingIOManager, IdentifiedItem
 
 
 # Definitions #
@@ -52,7 +52,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     manager and passes it to "evaluate" method. After evaluating, the output from "evaluate" is then put into the
     outputs manager to be used later.
 
-    "execute" is also MethodMultiplexer, meaning that its call is delegated to different specified method. This gives
+    "execute" is also MethodMultiplexer, meaning that its call is arbitrated to different specified method. This gives
     Block the flexibility to change the "execute" method's implementation during runtime.
 
     Class Attributes:
@@ -82,14 +82,18 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         "is_loop_event",
         "set_loop_event",
         "clear_loop_event",
+        "_produce",
+        "_produce_async",
         "run",
+        "run_async",
         "start",
-        "stop_server",
+        "start_async",
         "stop",
         "stop_async",
+        "join_execution",
         "join_execution_async",
     }
-    local_methods: ClassVar[set] = {"stop", "stop_async"}
+    local_methods: ClassVar[set] = {"stop", "stop_block_async"}
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...] | None] = None
@@ -113,8 +117,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     # IO
     sets_up_io: bool = True
     actualize_io_: bool = True
-    inputs: DelegatingIOManager
-    outputs: DelegatingIOManager
+    inputs: ArbitratingIOManager
+    outputs: ArbitratingIOManager
 
     no_output_sentinel: Any = None
 
@@ -190,8 +194,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # self.async_event_loop = get_event_loop()
         self._executing_waiters = deque()
 
-        self.inputs = DelegatingIOManager()
-        self.outputs = DelegatingIOManager()
+        self.inputs = ArbitratingIOManager()
+        self.outputs = ArbitratingIOManager()
 
         self.setup_kwargs = self.setup_kwargs.copy()
         self.evaluate_kwargs = self.evaluate_kwargs.copy()
@@ -369,9 +373,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         """Builds the IO with the default routing.
 
         Args:
-            *args: The arguments for creating the inner blocks.
-            override: Determines if the inner blocks will be overridden.
-            **kwargs: The keyword arguments for creating the inner blocks.
+            *args: The arguments for creating the io.
+            override: Determines if the io will be overridden.
+            **kwargs: The keyword arguments for creating the inner blockgroup.
         """
 
     async def build_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
@@ -395,6 +399,25 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         *args: Any,
         **kwargs: Any,
     ) -> tuple[dict[str, Any] | None, dict[str, bytes] | None]:
+        """Formats the given inputs, separating inputs and their identifiers.
+
+        This method iterates through the provided inputs dictionary, checking each value. If a value is an instance of
+        `IdentifiedItem`, it extracts the identifier (ID) and the actual data, placing them into separate dictionaries.
+        The IDs are stored with the same keys as in the original inputs, facilitating correlation between IDs and data.
+        If a value is not an `IdentifiedItem`, it is added to the formatted inputs without modification.
+
+        Args:
+            inputs: A dictionary of inputs to be formatted, where keys are input names and values are the input data.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+
+        Returns:
+            A tuple containing two dictionaries:
+            - The first dictionary contains the formatted inputs with the same keys as the original inputs. If an input
+              was an `IdentifiedItem`, its data is extracted and placed here.
+            - The second dictionary contains the IDs extracted from any `IdentifiedItem` inputs, with the same keys as
+              the original inputs. If an input was not an `IdentifiedItem`, its key will not appear in this dictionary.
+        """
         formatted_inputs = {}
         ids = {}
         for k, v in inputs.items():
@@ -413,6 +436,23 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         *args: Any,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
+        """Formats the outputs along with their identifiers into a dictionary for putting to outputs.
+
+        This method takes the outputs from the `evaluate` method and their corresponding identifiers, then formats them
+        into a dictionary where each key corresponds to an output name defined in `self.outputs.order`. If there is only
+        one output, it creates a single-entry dictionary with the output name as the key. For multiple outputs, it zips
+        the output names with the outputs, creating a dictionary of identified items.
+
+        Args:
+            outputs: The outputs to be formatted. Can be a single value or a tuple of values.
+            ids: A tuple of bytes representing the identifiers for each output. Defaults to an empty tuple.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+
+        Returns:
+            A dictionary where keys are output names and values are `IdentifiedItem` instances containing the output
+            data and its identifier. Returns `None` if no outputs are provided.
+        """
         keys = self.outputs.order
         if len(keys) == 1:
             return {keys[0]: IdentifiedItem(ids, outputs)}
@@ -674,13 +714,22 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     # Execute
     def _execute(self, *args: Any, **kwargs: Any) -> None:
+        """Executes by getting the inputs, evaluating, and putting to the outputs.
+
+        Args:
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+        """
+        # Get input from input manager and format it
         inputs, ids = self.format_input(self.get_input())
+        # Process inputs through the evaluate method and check if the outputs are not the sentinel value
         if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            # If outputs are valid, format and send them to the output manager
             self.put_output(self.format_output(outputs, ids))
 
     def execute(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            self._full_execute(*args, **kwargs)
+            self._execute(*args, **kwargs)
 
     async def _execute_async(self, *args: Any, **kwargs: Any) -> None:
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
@@ -690,7 +739,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     async def execute_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            await self._full_execute_async(*args, **kwargs)
+            await self._execute_async(*args, **kwargs)
 
     # Execute Loop
     def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
@@ -724,8 +773,18 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     # Produce
     def _produce(self, inputs: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
+        """Produces by formatting any given inputs, evaluating, and putting to the outputs.
+
+        Args:
+            inputs: Optional inputs to be used in the evaluation.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+        """
+        # Format any given inputs
         inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
+        # Process inputs through the evaluate method and check if the outputs are not the sentinel value
         if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            # If outputs are valid, format and send them to the output manager
             self.put_output(self.format_output(outputs, ids))
 
     def produce(self, *args: Any, **kwargs: Any) -> None:
@@ -793,7 +852,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 await self.setup_async(**(s_kwargs or {}))
 
             # Run one Execution
-            await self._full_execute_async(**(e_kwargs or {}))
+            await self._execute_async(**(e_kwargs or {}))
 
             # Optionally Teardown
             if self.tears_down:
@@ -825,7 +884,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Runs a single execution of the block, delegating to another process if selected.
+        """Runs a single execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
@@ -854,7 +913,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Asynchronously runs a single execution of the block, delegating to another process if selected.
+        """Asynchronously runs a single execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
@@ -905,7 +964,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         s_kwargs: dict[str, Any] | None = None,
         finalize: bool = True,
     ) -> None:
-        """Starts the continuous execution of the block, delegating to another process if selected.
+        """Starts the continuous execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
@@ -928,7 +987,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
         # Use Correct Context
         if self.is_alive():
-            self._proxy.start_passive(None, s_kwargs, False)
+            self._proxy.start(None, s_kwargs, False)
         elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
         else:
@@ -940,7 +999,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         s_kwargs: dict[str, Any] | None = None,
         finalize: bool = True,
     ) -> None:
-        """Asynchronously starts the continuous execution of the block, delegating to another process if selected.
+        """Asynchronously starts the continuous execution of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
@@ -968,12 +1027,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             await self._start_async(s_kwargs)
 
     # Stop Block
-    async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
-        """Starts the continuous execution of the block.
-
-        Args:
-            t_kwargs: The keyword arguments for block teardown.
-        """
+    async def _stop_block_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
         # Stop Production Task
         if self._production_task is not None:
             self.clear_loop_event()
@@ -990,13 +1044,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
         self._clear_executing()
 
-    async def stop_server_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
-        """Starts the continuous execution of the block.
-
-        Args:
-            t_kwargs: The keyword arguments for block teardown.
-        """
-        await self._stop_async(t_kwargs)
+    async def stop_block_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
+        await self._stop_block_async(t_kwargs)
         await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
         await gather(*(self.inputs.stop_server_async(update=False), self.outputs.stop_server_async(update=False)))
 
@@ -1008,16 +1057,16 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            self._proxy.stop_server(t_kwargs)
+            self._proxy.stop_block_async(t_kwargs)
             if update:
                 self.join_execution()
             self._stop_server(update)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._stop_async(t_kwargs), loop)
+            run_coroutine_threadsafe(self._stop_block_async(t_kwargs), loop)
             self.inputs.stop()
             self.outputs.stop()
         else:
-            run(self._stop_async(t_kwargs))
+            run(self._stop_block_async(t_kwargs))
             self.inputs.stop()
             self.outputs.stop()
 
@@ -1034,12 +1083,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            await self._proxy.stop_server_async(t_kwargs)
+            await self._proxy.stop_block_async(t_kwargs)
             if update:
                 await self.join_execution_async()
             await self._stop_server_async(update)
         else:
-            await self._stop_async(t_kwargs)
+            await self._stop_block_async(t_kwargs)
             await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     # Join Execution

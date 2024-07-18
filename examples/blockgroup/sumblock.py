@@ -1,16 +1,6 @@
 """ sumblock.py
 A Block which scales the input ndarray and returns its sum, minium, and maximum.
 """
-# Package Header #
-from blockobjects.header import *
-
-# Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
-
-
 # Imports #
 # Standard Libraries #
 from typing import ClassVar, Any
@@ -25,7 +15,7 @@ from blockobjects import BaseBlock
 # Definitions #
 # Classes #
 class SumBlock(BaseBlock):
-    """A Block which scales the input ndarray and returns its sum, minium, and maximum."""
+    """A Block which scales the input ndarray and returns its sum, minimum, and maximum."""
 
     # Class Attributes #
     default_input_names: ClassVar[tuple[str, ...]] = ("data", "scale")
@@ -35,7 +25,7 @@ class SumBlock(BaseBlock):
 
     # Instance Methods #
     # Evaluate
-    def evaluate(self, data: np.ndarray, scale: float = 1.0, *args, **kwargs: Any) -> Any:
+    def evaluate(self, data: np.ndarray, scale: float = 1.0, *args: Any, **kwargs: Any) -> Any:
         """Scales the given ndarray and returns some information from the array.
 
         Args:

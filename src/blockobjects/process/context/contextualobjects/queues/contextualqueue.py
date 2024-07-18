@@ -209,5 +209,5 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
         self.queue.join()
 
     async def join_async(self) -> None:
-        """Asynchronously, blocks until all items in the Queue have been gotten and the registry is updated."""
+        """Asynchronously, blockgroup until all items in the Queue have been gotten and the registry is updated."""
         await self.queue.join_async()

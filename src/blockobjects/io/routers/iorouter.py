@@ -32,30 +32,52 @@ import dill
 
 # Local Packages #
 from ...process import AsyncQueue
-from ..base import IOMap, BaseIO, BaseIOMultiplexer, IODelegator, IOWrapper
+from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
 
 
 # Definitions #
 # Classes #
 class IORouter(BaseIOMultiplexer, OrderableDict):
-    """An IO object which maps inputs to outputs.
+    """An IO object which maps inputs to outputs, facilitating the routing of data between different IO objects.
 
-    The default functionality is put a single output into multiple inputs.
+    It supports synchronous and asynchronous operations, allowing for flexible data handling in various contexts.
 
     Class Attributes:
-        default_get: The default name of the method to use for getting.
-        default_put: The default name of the method to use for putting.
-        default_io: The default IO object type to populate this object when constructed.
+        default_get: The default method name for synchronous get operations.
+        default_get_async: The default method name for asynchronous get operations.
+        default_put: The default method name for synchronous put operations.
+        default_put_async: The default method name for asynchronous put operations.
+        default_create_link: The default method name for creating links between IO objects.
 
     Attributes:
-        get: The method multiplexer which manages which get method to run when called.
-        put: The method multiplexer which manages which get method to run when called.
+        break_sentinel: A sentinel object used to indicate a break condition in IO operations.
+        default_io: The default IO object type to use when constructing new IO objects.
+        required: A tuple of required IO object names for certain operations, or None if not applicable.
+        optional_defaults: A dictionary of default values for optional IO objects.
+        id_number: A unique identifier for the IORouter instance.
+        create_link: A multiplexer for managing link creation methods.
+        directly_linked: A set of directly linked IO objects.
+        links_to: A dictionary mapping links from this router to others.
+        links_from: A dictionary mapping links to this router from others.
+        endpoints: A dictionary of endpoint links.
+        endpoint_tasks: A set of asyncio tasks associated with endpoint operations.
+        get_tasks: A set of asyncio tasks associated with get operations.
+        put_tasks: A set of asyncio tasks associated with put operations.
+        _is_listening: A flag indicating whether the router is currently listening for incoming data.
+        scheduled_listener_links: A set of links scheduled for listening.
+        listeners: A dictionary of active listener tasks.
+        callback: A synchronous callback function to be executed upon certain conditions.
+        callback_async: An asynchronous callback function to be executed upon certain conditions.
+        callback_executor: The current task executing the asynchronous callback, if any.
+        max_callback_tasks: The maximum number of concurrent callback tasks allowed.
+        callback_tasks: A set of asyncio tasks associated with callback operations.
 
     Args:
-        io_: The input/outputs to be managed.
-        *args: Arguments for inheritance.
-        init: Determines if this object will construct.
-        **kwargs: Keyword arguments for inheritance.
+        io_: Initial mapping of names to IO objects, or None for default initialization.
+        names: An iterable of names for IO objects, or None if not applicable.
+        *args: Additional positional arguments passed to parent class constructors.
+        init: Determines whether the object should perform initialization operations.
+        **kwargs: Additional keyword arguments passed to parent class constructors.
     """
 
     # Class Attributes #
@@ -186,13 +208,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # Set Item
     def __setitem__(self, key: str, item: BaseIO) -> None:
-        """Sets an IO within this manager. If an existing IO is an IODelegator, set it to
+        """Sets an IO within this manager. If an existing IO is an IOForwarder, set it to
 
         Args:
             key: The name of the IO to set.
             item: The IO object to set.
         """
-        if (io_object := self.data.get(key, None)) is not None and isinstance(io_object, IODelegator):
+        if (io_object := self.data.get(key, None)) is not None and isinstance(io_object, IOForwarder):
             io_object.io = item
         else:
             self.data[key] = item
@@ -408,6 +430,24 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         *args: Any,
         **kwargs: Any,
     ) -> None:
+        """Establishes a forward link from this router to another IO object.
+
+        This method creates a link between the `source` IO object in this router and the `other` IO object. If the
+        `destination` is specified, the link is made with the IO object within the `other` object. If the link is
+        identified as a listen link (where this router should listen for data from the `other` object),
+        the `other` object is added to the scheduled listener links. Otherwise, if a `destination` is specified and
+        a link IO object is created by the `other` router, it replaces the `source` IO object in this router.
+
+        Args:
+            source: The name of the source IO object in this router.
+            other: The IO object to link to.
+            destination: The name of the destination IO object in the `other` object. If `None`, the link is made
+                         directly to the `other` object.
+            *args: Additional positional arguments passed to the `create_link` method of the `other` object
+                   if a destination is specified.
+            **kwargs: Additional keyword arguments passed to the `create_link` method of the `other` object
+                      if a destination is specified.
+        """
         key = (self.id_number, source, other.id_number, destination)
         self.links_to[key] = other
         other.links_from[key] = self
@@ -526,7 +566,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         """Asynchronously checks if all required IO objects are ready for a callback.
 
         Args:
-            required: The names of the required IO objects. If None, defaults to self.required or self.order.
+            required: The names of the required IO objects. If None, defaults to self. required or self.order.
             *args: Additional arguments.
             **kwargs: Additional keyword arguments.
 
@@ -539,8 +579,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             return any(v.poll() for k, v in self.data.items())
 
     def _execute_next_callback(self, task, fut) -> None:
-        """
-        Executes the next callback if the callback condition is met.
+        """Executes the next callback if the callback condition is met.
 
         Args:
             task: The task that just completed.
@@ -556,8 +595,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             fut.set_result(None)
 
     def execute_callback(self, *args, **kwargs) -> None:
-        """
-        Executes the callback function while the callback condition is met.
+        """Executes the callback function while the callback condition is met.
 
         Args:
             *args: Additional arguments.
@@ -568,8 +606,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             self.callback(self.get_required())
 
     async def execute_callback_async(self, *args, **kwargs) -> None:
-        """
-        Asynchronously executes the callback function while the callback condition is met.
+        """Asynchronously executes the callback function while the callback condition is met.
 
         Args:
             *args: Additional arguments.
@@ -601,14 +638,14 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.callback_executor = None
 
     def schedule_callback(self, *args, **kwargs) -> None:
-        """
-        Schedules the execution of the callback function.
+        """Schedules the execution of the callback function.
 
         Args:
             *args: Additional arguments.
             **kwargs: Additional keyword arguments.
         """
-        self.execute_callback(*args, **kwargs)
+        if self.callback_condition():
+            self.execute_callback(*args, **kwargs)
 
     async def schedule_callback_async(self, *args, **kwargs) -> None:
         """Asynchronously schedules the execution of the callback function.
@@ -897,17 +934,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         """
         await gather(*(self.data[k].put_async(v, *args, **kwargs) for k, v in zip(self.order, values)))
 
-    def put_callback(
-        self,
-        name: str,
-        value: Any,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        """Put an item into an IO object.
+    def put_callback(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
+        """Puts an item into an IO object and schedule a callback.
 
         Args:
             name: The key name to the IO object to put the item into.
@@ -919,16 +947,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.data[name].put(value, *args, **kwargs)
 
         # Schedule Callback
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-        self.schedule_callback(required, default, defaults)
+        self.schedule_callback()
 
     async def put_callback_async(
         self,
         name: str,
         value: Any,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
         *args,
         **kwargs,
     ) -> None:
@@ -944,8 +968,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         await self.data[name].put_async(value, *args, **kwargs)
 
         # Schedule Callback
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-        await self.schedule_callback_async(required, default, defaults)
+        await self.schedule_callback_async()
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
@@ -1025,20 +1048,27 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     # Listening
     async def listen_link_async(self, key: tuple[int, str, int, str], *args, **kwargs) -> None:
-        """Put an item into an IO object.
+        """Asynchronously listens for data from a linked IO and forwards it to the current IO's data queue.
+
+        This method continuously listens for data from a linked IO object based on the provided key. Once data is
+        received, it is put into the current IO's data queue. Additionally, any scheduled callbacks are executed
+        after putting data into the queue. This process repeats as long as the `_is_listening` flag is set to True.
 
         Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
+            key: A tuple containing the identifiers for the linked IO. The structure is (int, str, int, str) where
+                 the elements represent unique identifiers and names for the origin and destination IOs.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
         """
         _, origin, _, name = key
         io_ = self.links_from[key]
+        # Determine the appropriate get method based on whether the origin is specified.
         get_method = io_.get_async if origin is None else partial(io_.get_item_async, origin)
 
         while self._is_listening:
+            # Retrieve data from the linked IO and put it into the current IO's data queue.
             await self.data[name].put_async(await get_method())
+            # Schedule callbacks if necessary.
             await self.schedule_callback_async()
 
     def _remove_listener(self, task: Task, key: tuple[int, str, int, str]) -> None:

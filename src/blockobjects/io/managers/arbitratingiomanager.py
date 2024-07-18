@@ -1,4 +1,4 @@
-""" delegatingiomanager.py
+""" arbitratingiomanager.py
 An IO object which maps named inputs to names outputs in a one-to-one manner.
 """
 # Package Header #
@@ -29,7 +29,7 @@ from .contextualiomanager import ContextualIOManager
 
 # Definitions #
 # Classes #
-class DelegatingIOManager(ContextualIOManager, ProcessArbitrator):
+class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
     """An IO object which maps named inputs to names outputs in a one-to-one manner.
 
     Class Attributes:
@@ -56,7 +56,9 @@ class DelegatingIOManager(ContextualIOManager, ProcessArbitrator):
         "default_io",
     }
     local_methods: ClassVar[set] = {
+        "create_io_wrapper",
         "link_forward",
+        "link_backward",
         "update_server_io",
         "update_server_io_async",
         "set_callbacks",

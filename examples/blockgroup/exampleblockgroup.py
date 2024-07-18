@@ -1,16 +1,6 @@
 """ exampleblockgroup.py
 A Block which generates a random array then finds the sum of the array twice and compares the outputs
 """
-# Package Header #
-from blockobjects.header import *
-
-# Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
-
-
 # Imports #
 # Standard Libraries #
 from typing import ClassVar, Any
@@ -40,12 +30,12 @@ class ExampleBlockGroup(BlockGroup):
         override: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Creates the inner blocks.
+        """Creates the inner blockgroup.
 
         Args:
-            *args: The arguments for creating the inner blocks.
-            override: Determines if the inner blocks will be overridden.
-            **kwargs: The keyword arguments for creating the inner blocks.
+            *args: The arguments for creating the inner blockgroup.
+            override: Determines if the inner blockgroup will be overridden.
+            **kwargs: The keyword arguments for creating the inner blockgroup.
         """
         # Create Blocks
         self.blocks["generator"] = RNGBlock(shape=shape)
@@ -55,11 +45,11 @@ class ExampleBlockGroup(BlockGroup):
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
-        """Links the inner blocks' IO.
+        """Links the inner blockgroup' IO.
 
         Args:
-            *args: The arguments for creating linking the inner blocks' IO.
-            **kwargs: The keyword arguments for creating linking the inner blocks' IO.
+            *args: The arguments for creating linking the inner blockgroup' IO.
+            **kwargs: The keyword arguments for creating linking the inner blockgroup' IO.
         """
         # Get Blocks
         generator = self.blocks["generator"]

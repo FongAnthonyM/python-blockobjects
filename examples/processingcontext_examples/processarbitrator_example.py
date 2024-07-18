@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" processdelegate_example.py
+""" processarbitrate_example.py
 An example of how to use the ProcessArbitrator class.
 """
 # Imports #
@@ -55,13 +55,13 @@ class ProcessArbitratorExample(ProcessArbitrator):
         return getpid()
 
     # Local Methods #
-    # Running local methods which can invoke their server version can be useful, especially for manual delegation
+    # Running local methods which can invoke their server version can be useful, especially for manual arbitration
     # Unexposed Methods run methods locally but cannot invoke the server version of the method
     # Local Methods run method locally and can invoke server version of the method
     def _unavailable_interface(self):
         """Checks if the method the unexposed method can invoke the server version of the method."""
         # Unexposed methods cannot invoke the server version of the method
-        # Unsuitable for manual delegation
+        # Unsuitable for manual arbitration
         if self.is_proxy():
             return hasattr(self._proxy, "_unavailable_interface")  # This will always be False
         else:
@@ -70,7 +70,7 @@ class ProcessArbitratorExample(ProcessArbitrator):
     def local_method(self):
         """Gets the process id of the proxy and the server if the server is alive."""
         # Local methods can invoke the server version of the method
-        # Suitable for manual delegation
+        # Suitable for manual arbitration
         # Great for controlling proxy recursion (if server also creates another server to proxy from)
         proxy_pid = getpid()
         if self.is_proxy():
@@ -84,17 +84,17 @@ class ProcessArbitratorExample(ProcessArbitrator):
 def method_execution_overview():
     print(f"Method Execution Overview: \n")
 
-    # Create Process Delegate
-    delegate = ProcessArbitratorExample(2)
+    # Create Process Arbitrate
+    arbitrate = ProcessArbitratorExample(2)
 
     # Local Calls #
-    pid = delegate.running_pid()
-    public_result = delegate.multiply(2)  # Is public
-    private_result = delegate._unavailable()  # Is private
-    exposed_call_result = delegate._available()  # Name in exposed list
-    unexposed_call_result = delegate.unavailable()  # Name in unexposed list
-    unexposed_server_invocation = delegate._unavailable_interface()  # Unexposed method trying to invoke server method
-    local_pid, server_pid = delegate.local_method()  # Local method invoking server method
+    pid = arbitrate.running_pid()
+    public_result = arbitrate.multiply(2)  # Is public
+    private_result = arbitrate._unavailable()  # Is private
+    exposed_call_result = arbitrate._available()  # Name in exposed list
+    unexposed_call_result = arbitrate.unavailable()  # Name in unexposed list
+    unexposed_server_invocation = arbitrate._unavailable_interface()  # Unexposed method trying to invoke server method
+    local_pid, server_pid = arbitrate.local_method()  # Local method invoking server method
 
     # Print Results
     print(f"Local Calls:")
@@ -109,27 +109,27 @@ def method_execution_overview():
 
     # Sever Calls #
     # Start Server
-    delegate.start_server()
+    arbitrate.start_server()
 
     # Check Server Status
-    assert delegate.is_proxy()
-    assert delegate.is_alive()
+    assert arbitrate.is_proxy()
+    assert arbitrate.is_alive()
 
     # Run the same methods
-    pid = delegate.running_pid()
-    public_result = delegate.multiply(2)  # Is public
-    private_result = delegate._unavailable()  # Is private
-    exposed_call_result = delegate._available()  # Name in exposed list
-    unexposed_call_result = delegate.unavailable()  # Name in unexposed list
-    unexposed_server_invocation = delegate._unavailable_interface()  # Unexposed method trying to invoke server method
-    local_pid, server_pid = delegate.local_method()  # Local method invoking server method
+    pid = arbitrate.running_pid()
+    public_result = arbitrate.multiply(2)  # Is public
+    private_result = arbitrate._unavailable()  # Is private
+    exposed_call_result = arbitrate._available()  # Name in exposed list
+    unexposed_call_result = arbitrate.unavailable()  # Name in unexposed list
+    unexposed_server_invocation = arbitrate._unavailable_interface()  # Unexposed method trying to invoke server method
+    local_pid, server_pid = arbitrate.local_method()  # Local method invoking server method
 
     # Stop Server
-    delegate.stop_server()
+    arbitrate.stop_server()
 
     # Check Server Status
-    assert not delegate.is_proxy()
-    assert not delegate.is_alive()
+    assert not arbitrate.is_proxy()
+    assert not arbitrate.is_alive()
 
     # Print Results
     print(f"Server Calls:")
@@ -143,64 +143,64 @@ def method_execution_overview():
     print(f"")
 
 
-def delegate_state_overview():
-    print(f"Delegate State Overview: \n")
+def arbitrate_state_overview():
+    print(f"Arbitrate State Overview: \n")
 
-    # Create Process Delegate
-    delegate = ProcessArbitratorExample(2, secret=-1)
+    # Create Process Arbitrate
+    arbitrate = ProcessArbitratorExample(2, secret=-1)
 
     # Check Values
     print(f"Default Values:")
-    print(f"number: {delegate.number} == 2")
-    print(f"item: {delegate.item} == 10")
-    print(f"secret: {delegate.secret} == -1")
+    print(f"number: {arbitrate.number} == 2")
+    print(f"item: {arbitrate.item} == 10")
+    print(f"secret: {arbitrate.secret} == -1")
     print(f"")
 
     # Start Server
-    delegate.start_server()  # All attributes are sent to the server (including untransmittable attributes)
+    arbitrate.start_server()  # All attributes are sent to the server (including untransmittable attributes)
 
     # Check Server Status
-    assert delegate.is_proxy()
-    assert delegate.is_alive()
+    assert arbitrate.is_proxy()
+    assert arbitrate.is_alive()
 
     # Make a local change which will not be reflected in the server
-    delegate.number = 1
-    delegate.item = 50
-    delegate.secret = -20
+    arbitrate.number = 1
+    arbitrate.item = 50
+    arbitrate.secret = -20
 
     print(f"Local Changes:")
-    print(f"Local vs Server number: {delegate.number} != {delegate.get_attribute('number')}")
-    print(f"Local vs Server item: {delegate.item} != {delegate.get_attribute('item')}")
-    print(f"Local vs Server secret: {delegate.secret} != {delegate.get_attribute('secret')}")
+    print(f"Local vs Server number: {arbitrate.number} != {arbitrate.get_attribute('number')}")
+    print(f"Local vs Server item: {arbitrate.item} != {arbitrate.get_attribute('item')}")
+    print(f"Local vs Server secret: {arbitrate.secret} != {arbitrate.get_attribute('secret')}")
     print(f"")
 
     # Update local values from the server (except for untransmittable attributes)
-    delegate.update()
+    arbitrate.update()
 
     print(f"Local Update:")
-    print(f"Local vs Server number: {delegate.number} == {delegate.get_attribute('number')}")
-    print(f"Local vs Server item: {delegate.item} == {delegate.get_attribute('item')}")
-    print(f"Local vs Server secret: {delegate.secret} != {delegate.get_attribute('secret')}")
+    print(f"Local vs Server number: {arbitrate.number} == {arbitrate.get_attribute('number')}")
+    print(f"Local vs Server item: {arbitrate.item} == {arbitrate.get_attribute('item')}")
+    print(f"Local vs Server secret: {arbitrate.secret} != {arbitrate.get_attribute('secret')}")
     print(f"")
 
     # Update server values from the local (except for untransmittable attributes)
-    delegate.number = 1
-    delegate.item = 50
-    delegate.secret = -20
-    delegate.update_server()
+    arbitrate.number = 1
+    arbitrate.item = 50
+    arbitrate.secret = -20
+    arbitrate.update_server()
 
     print(f"Sever Update:")
-    print(f"Local vs Server number: {delegate.number} == {delegate.get_attribute('number')}")
-    print(f"Local vs Server item: {delegate.item} == {delegate.get_attribute('item')}")
-    print(f"Local vs Server secret: {delegate.secret} != {delegate.get_attribute('secret')}")
+    print(f"Local vs Server number: {arbitrate.number} == {arbitrate.get_attribute('number')}")
+    print(f"Local vs Server item: {arbitrate.item} == {arbitrate.get_attribute('item')}")
+    print(f"Local vs Server secret: {arbitrate.secret} != {arbitrate.get_attribute('secret')}")
     print(f"")
 
     # Stop Server
-    delegate.stop_server()
+    arbitrate.stop_server()
 
     # Check Server Status
-    assert not delegate.is_proxy()
-    assert not delegate.is_alive()
+    assert not arbitrate.is_proxy()
+    assert not arbitrate.is_alive()
 
 
 # Main #
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
     method_execution_overview()
-    delegate_state_overview()
+    arbitrate_state_overview()
 
 
 

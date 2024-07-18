@@ -1,16 +1,6 @@
 """ isequalblock.py
 A Block which checks if all values in the array are equal. Can select the equals methods.
 """
-# Package Header #
-from blockobjects.header import *
-
-# Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
-
-
 # Imports #
 # Standard Libraries #
 from typing import ClassVar, Any

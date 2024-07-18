@@ -73,7 +73,7 @@ class QueueInterface(BaseObject):
         pass
 
     async def join_async(self) -> None:
-        """Asynchronously, blocks until all items in the Queue have been gotten.
+        """Asynchronously, blockgroup until all items in the Queue have been gotten.
 
         Args:
             interval: The time, in seconds, between each queue check.

@@ -1,18 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" test_hdf5objects.py
-Description:
+""" contexts_example.py
+An example of how to use the processing contexts.
 """
-# Package Header #
-from blockobjects.header import *
-
-# Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
-
-
 # Imports #
 # Standard Libraries #
 from asyncio import run
@@ -22,16 +12,20 @@ from time import sleep
 from blockobjects.process import DEFAULT_PROCESS_CONTEXT
 
 # Local Packages #
-from examples.blocks.exampleblockgroup import ExampleBlockGroup
+from examples.blockgroup.exampleblockgroup import ExampleBlockGroup
 
 
 # Definitions #
 # Functions #
 async def main():
+    print("BlockGroup Example:")
+
     # Create Block Group
     group = ExampleBlockGroup(will_proxy=True)
     # Start Block Group
+    print("Starting Block Group")
     await group.start_async()
+    print("Block Group Started")
 
     # Wait for output
     first_output = await group.outputs.get_all_async()
@@ -40,10 +34,12 @@ async def main():
     fourth_output = await group.outputs.get_all_async()
 
     # Stop Block Group
+    print("Stopping Block Group")
     await group.stop_async()
 
     # Check Output
-    assert first_output
+    print("Checking Output")
+    print(f"First Output: {first_output['group_result'][1]} == True")
 
 
 # Main #

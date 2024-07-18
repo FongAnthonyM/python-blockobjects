@@ -15,4 +15,4 @@ __email__ = __email__
 # Local Packages #
 from .baseiomanager import BaseIOManager
 from .contextualiomanager import ContextualIOManager
-from .delegatingiomanager import DelegatingIOManager
+from .arbitratingiomanager import ArbitratingIOManager
