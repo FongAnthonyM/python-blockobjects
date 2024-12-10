@@ -110,8 +110,3 @@ if __name__ == "__main__":
     contexts()
     manager_contexts()
     default_context()
-
-
-
-
-

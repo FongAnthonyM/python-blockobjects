@@ -93,7 +93,7 @@ def multiprocessing_example():
     print(f"The main PID is {getpid()} \n")
 
     # Set the processing context
-    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
+    DEFAULT_PROCESS_CONTEXT.select_context("ray")
 
     # Create Block
     block = ExampleBlock(will_proxy=True, init_setup=False)
