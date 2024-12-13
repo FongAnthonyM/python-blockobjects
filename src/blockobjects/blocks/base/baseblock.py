@@ -32,7 +32,7 @@ from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import ArbitratingIOManager, IdentifiedItem
+from ...io import IORouter, ArbitratingIOManager, IdentifiedItem
 
 
 # Definitions #
@@ -97,8 +97,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...] | None] = None
+    default_input_signal_names: ClassVar[tuple[str, ...]] = ()
     default_optional_input: ClassVar[dict[str, Any]] = {}
     default_output_names: ClassVar[tuple[str, ...]] = ()
+    default_output_signal_names: ClassVar[tuple[str, ...]] = ()
 
     init_setup: ClassVar[bool] = True
 
@@ -119,6 +121,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     actualize_io_: bool = True
     inputs: ArbitratingIOManager
     outputs: ArbitratingIOManager
+
+    signal_io_name: str = ("block_signals")
+    signals_type: type[IORouter] = IORouter
 
     no_output_sentinel: Any = None
 
@@ -345,6 +350,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self,
         input_names: str | Iterable[str] | None = None,
         output_names: str | Iterable[str] | None = None,
+        input_signal_names: str | Iterable[str] | None = None,
+        output_signal_names: str | Iterable[str] | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -353,6 +360,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         Args:
             input_names: The names of the inputs to create.
             output_names: The names of the outputs to create.
+            input_signal_names: The names of the input signals to create.
+            output_signal_names: The names of the output signals to create.
             *args: The arguments for constructing the io.
             **kwargs: The keyword arguments for constructing the io.
         """
@@ -360,13 +369,26 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             input_names = self.default_input_names
         if output_names is None:
             output_names = self.default_output_names
+        if input_signal_names is None:
+            input_signal_names = self.default_input_signal_names
+        if output_signal_names is None:
+            output_signal_names = self.default_output_signal_names
 
+        # Create IO
         self.inputs.create_io(name=input_names, *args, **kwargs)
         self.outputs.create_io(name=output_names, *args, **kwargs)
 
         self.inputs.required = self.default_required_input
         self.inputs.optional_defaults.update(self.default_optional_input)
 
+        # Create Signal IO
+        self.inputs.create_io(name=self.signal_io_name, type_=self.signals_type)
+        self.inputs[self.signal_io_name].create_io(name=input_signal_names)
+
+        self.outputs.create_io(name=self.signal_io_name, type_=self.signals_type)
+        self.outputs[self.signal_io_name].create_io(name=output_signal_names)
+
+        # Setup IO Connections
         self.setup_io()
 
     def build_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
