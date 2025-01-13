@@ -13,13 +13,10 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-import dill
-from pickle import PicklingError
 from typing import ClassVar, Any
-from types import MethodType
-from weakref import ref
 
 # Third-Party Packages #
+import dill
 from baseobjects import BaseMethod
 from ...process import ProcessArbitrator, arbitratemethod
 
@@ -61,8 +58,6 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
         "link_backward",
         "update_server_io",
         "update_server_io_async",
-        "set_callbacks",
-        "set_callbacks_async",
     }
 
     default_get: ClassVar[str] = "get_required"
@@ -101,53 +96,12 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
     async def update_server_io_async(self):
         await self._proxy.set_deepest_async(super().get_deepest())
 
-    # Callback
-    def set_callbacks(self, func, func_async) -> None:
-        if isinstance(func, bytes):
-            func = dill.loads(func)
-        if isinstance(func_async, bytes):
-            func_async = dill.loads(func_async)
-
-        if self.is_proxy():
-            if (weak := getattr(func, "_self_", None)) is not None:
-                func = MethodType(func.__wrapped__, weak())
-            if (weak := getattr(func_async, "_self_", None)) is not None:
-                func_async = MethodType(func_async.__wrapped__, weak())
-
-            try:
-                self._proxy.set_callbacks(func, func_async)
-            except:
-                self._proxy.set_callbacks(dill.dumps(func), dill.dumps(func_async))
-        else:
-            self.callback = func
-            self.callback_async = func_async
-
-    async def set_callbacks_async(self, func, func_async) -> None:
-        if isinstance(func, bytes):
-            func = dill.loads(func)
-        if isinstance(func_async, bytes):
-            func_async = dill.loads(func_async)
-
-        if self.is_proxy():
-            if (weak := getattr(func, "_self_", None)) is not None:
-                func = MethodType(func.__wrapped__, weak())
-            if (weak := getattr(func_async, "_self_", None)) is not None:
-                func_async = MethodType(func_async.__wrapped__, weak())
-
-            try:
-                await self._proxy.set_callbacks_async(func, func_async)
-            except:
-                await self._proxy.set_callbacks_async(dill.dumps(func), dill.dumps(func_async))
-        else:
-            self.callback = func
-            self.callback_async = func_async
-
     # Proxy
-    def _stop_server(self, update: bool = True) -> None:
+    def _stop_server(self, update: bool = True, exclude: set | None = None) -> None:
         """Stops the remote server relative to this object.
 
         Args:
             update: Determines if this object should be updated from the server before stopping.
         """
         self.stop()
-        super()._stop_server(update)
+        super()._stop_server(update, exclude)

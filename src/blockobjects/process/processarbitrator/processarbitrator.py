@@ -492,4 +492,3 @@ class ProcessArbitrator(ContextualObjectInterface):
                 self.update_server()  # Update server attributes
             else:
                 self._proxy = self._proxy_context.create_proxy(cls=self.__class__, **self.proxy_kwargs)
-

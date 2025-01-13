@@ -165,10 +165,10 @@ class ContextualSimpleQueue(BaseContextualObject, QueueInterface):
         return await self.queue.put_async(value=value, timeout=timeout, interval=interval)
 
     # Join
-    def join(self) -> None:
+    def join(self, *args: Any, **kwargs: Any) -> None:
         """Blocks until all items in the Queue have been gotten and the registry is updated."""
-        self.queue.join()
+        self.queue.join(*args, **kwargs)
 
-    async def join_async(self) -> None:
+    async def join_async(self, *args: Any, **kwargs: Any) -> None:
         """Asynchronously, blockgroup until all items in the Queue have been gotten and the registry is updated."""
-        await self.queue.join_async()
+        await self.queue.join_async(*args, **kwargs)

@@ -16,9 +16,11 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from typing import Any, NamedTuple, Optional
+from warnings import warn
 
 # Third-Party Packages #
 from baseobjects import BaseObject, SentinelObject
+from baseobjects.warnings import NotImplementedWarning
 
 # Local Packages #
 
@@ -80,8 +82,8 @@ class BaseIO(BaseObject):
         """Gets the requested item.
 
         Args:
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The requested item.
@@ -95,8 +97,8 @@ class BaseIO(BaseObject):
         """Asynchronously gets the requested item.
 
         Args:
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The requested item.
@@ -112,8 +114,8 @@ class BaseIO(BaseObject):
 
         Args:
             value: The value to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
 
         Returns:
             Any result from putting an item.
@@ -128,8 +130,8 @@ class BaseIO(BaseObject):
 
         Args:
             value: The object to put into this object.
-            *args: Variable length argument list for putting the item.
-            **kwargs: Arbitrary keyword arguments for putting the item.
+            *args: Positional arguments for putting the item.
+            **kwargs: Keyword arguments for putting the item.
 
         Returns:
             Any result from putting an item.
@@ -138,6 +140,15 @@ class BaseIO(BaseObject):
             NotImplementedError: This is an abstract method that should be implemented in subclasses.
         """
         raise NotImplementedError
+
+    # Join
+    def join(self, *args: Any, **kwargs: Any) -> None:
+        """Blocks until a condition is met, typically when the IO object is empty."""
+        warn(f"{self.__class__} join method", NotImplementedWarning)
+
+    async def join_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously blocks until a condition is met, typically when the IO object is empty."""
+        warn(f"{self.__class__} join_async method", NotImplementedWarning)
 
     # IO Mapping
     def get_links(self) -> dict[str, IOMap] | None:

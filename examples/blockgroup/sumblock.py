@@ -22,8 +22,22 @@ class SumBlock(BaseBlock):
     default_required_input: ClassVar[tuple[str, ...]] = ("data",)
     default_optional_input: ClassVar[dict[str, Any]] = {"scale": 1.0}
     default_output_names: ClassVar[tuple[str, ...]] = ("out_number", "scaled_min", "scaled_max")
+    default_input_signal_names: ClassVar[tuple[str, ...]] = ("stop_flag",)
+    default_output_signal_names: ClassVar[tuple[str, ...]] = ("done_flag",)
+
+    # Attributes #
+    signal_callback_map = {"stop_callback": ("stop_signal", ("stop_flag",), {})}
 
     # Instance Methods #
+    # Signals
+    def stop_signal(self, stop_flag: bool) -> None:
+        if stop_flag:
+            self.stop()
+
+    async def stop_signal_async(self, stop_flag: bool) -> None:
+        if stop_flag:
+            await self.stop_async()
+
     # Evaluate
     def evaluate(self, data: np.ndarray, scale: float = 1.0, *args: Any, **kwargs: Any) -> Any:
         """Scales the given ndarray and returns some information from the array.
@@ -40,3 +54,7 @@ class SumBlock(BaseBlock):
         scaled_data = data * scale
 
         return scaled_data.sum(), scaled_data.min(), scaled_data.max()
+
+    # Teardown
+    async def teardown(self) -> None:
+        await self.outputs.put_item_async(self.signal_io_name, {"done_flag": True})

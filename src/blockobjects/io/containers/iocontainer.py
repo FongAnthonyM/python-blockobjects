@@ -13,6 +13,8 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from asyncio import sleep
+from time import perf_counter
 from typing import Any
 from queue import Empty
 
@@ -59,8 +61,8 @@ class IOContainer(BaseIO):
 
         Args:
             default: The default value to return if this container is empty.
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             Any: The value from the container.
@@ -83,8 +85,8 @@ class IOContainer(BaseIO):
 
         Args:
             default: The default value to return if this container is empty.
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The value from the container.
@@ -108,8 +110,8 @@ class IOContainer(BaseIO):
 
         Args:
             value: The value to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
         """
         self.value = value
 
@@ -118,7 +120,65 @@ class IOContainer(BaseIO):
 
         Args:
             value: The object to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
         """
         self.value = value
+
+    # Join
+    def join(self, timeout: float | None = None, *args: Any, **kwargs: Any) -> None :
+        """Blocks until the object has completed or the timeout expires.
+
+        Args:
+            timeout: The maximum duration in seconds to wait before an error is raised. If None, indefinite blocking
+                is prohibited, and a `RuntimeError` is raised.
+            *args: Positional arguments for inheritance.
+            **kwargs: Keyword arguments for inheritance.
+
+        Raises:
+            RuntimeError: Raised when a timeout is not specified and the `value` attribute is still the `empty_sentinel`
+            TimeoutError: Raised when the timeout expires before the thread has completed its execution
+        """
+        # Check if the object is empty
+        if self.value is self.empty_sentinel:
+            return
+
+        # Determine if there is a timeout
+        if timeout is None:
+            # Prevent a forever blocking
+            raise RuntimeError(f"{self} timeout must be specified, otherwise it will block forever.")
+        else:
+            # Wait for value to be empty or timeout
+            deadline = timeout + perf_counter()
+            while self.value is not self.empty_sentinel:
+                if deadline <= perf_counter():
+                    raise TimeoutError
+
+    async def join_async(self, timeout: float | None = None, interval: float = 0.0, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously, blocks the until the object has completed or the timeout expires.
+
+        Args:
+            timeout: The maximum duration in seconds to wait before an error is raised. If None, indefinite blocks.
+            interval: The interval in seconds between successive checks of the object's value.
+            *args: Positional arguments for inheritance.
+            **kwargs: Keyword arguments for inheritance.
+
+        Raises:
+            TimeoutError: If object's value does not become the empty sentinel within the specified duration.
+        """
+        # Check if the object is empty
+        if self.value is self.empty_sentinel:
+            return
+
+        # Determine if there is a timeout
+        if timeout is None:
+            # Wait for value to be empty
+            while self.value is not self.empty_sentinel:
+                await sleep(interval)
+        else:
+            # Wait for value to be empty or timeout
+            deadline = timeout + perf_counter()
+            while self.value is not self.empty_sentinel:
+                await sleep(interval)
+                if deadline <= perf_counter():
+                    raise TimeoutError

@@ -290,6 +290,11 @@ class AsyncQueue(Queue, QueueInterface):
                 pass
 
     async def join_async(self, interval: float = 0.0) -> None:
+        """Asynchronously blocks until all items in the Queue have been gotten and the registry is updated.
+
+        Args:
+            interval: The time, in seconds, between each queue check.
+        """
         if self.tracking:
             if self._unfinished_tasks > 0:
                 await self._finished.wait()

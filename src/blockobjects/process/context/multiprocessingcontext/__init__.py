@@ -13,5 +13,6 @@ __email__ = __email__
 
 # Imports #
 # Local Packages #
+from .functionreducer import reducefunction
 from .futures import *
 from .multiprocessingcontext import MultiProcessingContext

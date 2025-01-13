@@ -89,8 +89,8 @@ class IOForwarder(BaseIO):
         """Asynchronously gets the requested item from another IO object.
 
         Args:
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The requested item.
@@ -103,8 +103,8 @@ class IOForwarder(BaseIO):
 
         Args:
             value: The value to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
         """
         return self.get_last_io().put(value, *args, **kwargs)
 
@@ -113,7 +113,26 @@ class IOForwarder(BaseIO):
 
         Args:
             value: The object to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
         """
         return await self.get_last_io().put_async(value, *args, **kwargs)
+
+    # Join
+    def join(self, *args: Any, **kwargs: Any) -> None:
+        """Joins another IO object.
+
+        Args:
+            *args: Positional arguments for joining an IO object.
+            **kwargs: Keyword arguments for joining an IO object.
+        """
+        return self.get_last_io().join(*args, **kwargs)
+
+    async def join_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously joins another IO object.
+
+        Args:
+            *args: Positional arguments for joining an IO object.
+            **kwargs: Keyword arguments for joining an IO object.
+        """
+        return await self.get_last_io().join_async(*args, **kwargs)

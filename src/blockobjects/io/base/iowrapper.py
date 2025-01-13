@@ -38,8 +38,10 @@ class IOWrapper(BaseIO):
         getter_async: An asynchronous function or method that is used to get data.
         putter: A function or method that is used to put data.
         putter_async: An asynchronous function or method that is used to put data.
-        *args: Variable length argument list.
-        **kwargs: Arbitrary keyword arguments.
+        joiner: A function or method that is used to join.
+        joiner_async: An asynchronous function or method that is used to join.
+        *args: Positional arguments.
+        **kwargs: Keyword arguments.
     """
 
     # Attributes #
@@ -47,6 +49,8 @@ class IOWrapper(BaseIO):
     getter_async: AnyCallable | None = None
     putter: AnyCallable | None = None
     putter_async: AnyCallable | None = None
+    joiner: AnyCallable | None = None
+    joiner_async: AnyCallable | None = None
 
     # Magic Methods #
     # Construction/Destruction
@@ -56,6 +60,8 @@ class IOWrapper(BaseIO):
         getter_async: AnyCallable | None = None,
         putter: AnyCallable | None = None,
         putter_async: AnyCallable | None = None,
+        joiner: AnyCallable | None = None,
+        joiner_async: AnyCallable | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -64,6 +70,8 @@ class IOWrapper(BaseIO):
         self.getter_async = getter_async
         self.putter = putter
         self.putter_async = putter_async
+        self.joiner = joiner
+        self.joiner_async = joiner_async
 
         # Parent Attributes #
         super().__init__(*args, **kwargs)
@@ -74,8 +82,8 @@ class IOWrapper(BaseIO):
         """Gets an item using the getter function or method.
 
         Args:
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The item returned by the getter function or method.
@@ -86,8 +94,8 @@ class IOWrapper(BaseIO):
         """Asynchronously gets an item using the getter_async function or method.
 
         Args:
-            *args: Variable length argument list for getting an item.
-            **kwargs: Arbitrary keyword arguments for getting an item.
+            *args: Positional arguments for getting an item.
+            **kwargs: Keyword arguments for getting an item.
 
         Returns:
             The item returned by the getter_async function or method.
@@ -100,8 +108,8 @@ class IOWrapper(BaseIO):
 
         Args:
             value: The value to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
 
         Returns:
             The result of the putter function or method.
@@ -113,10 +121,29 @@ class IOWrapper(BaseIO):
 
         Args:
             value: The value to put into this object.
-            *args: Variable length argument list for putting an item.
-            **kwargs: Arbitrary keyword arguments for putting an item.
+            *args: Positional arguments for putting an item.
+            **kwargs: Keyword arguments for putting an item.
 
         Returns:
             The result of the putter function or method.
         """
         return await self.putter_async(value, *args, **kwargs)
+
+    # Join
+    def join(self, *args: Any, **kwargs: Any) -> None:
+        """Joins using the joiner function or method.
+
+        Args:
+            *args: Positional arguments for joining.
+            **kwargs: Keyword arguments for joining.
+        """
+        return self.joiner(*args, **kwargs)
+
+    async def join_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously joins using the joiner_async function or method.
+
+        Args:
+            *args: Positional arguments for joining.
+            **kwargs: Keyword arguments for joining.
+        """
+        return await self.joiner_async(*args, **kwargs)

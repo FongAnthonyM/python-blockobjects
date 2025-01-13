@@ -31,10 +31,10 @@ class BaseContextualObject(ContextualObjectInterface):
         _context: The context of this object.
 
     Args:
-        *args: Variable length argument list for the parent.
+        *args: Positional arguments for the parent.
         context: The context to assign this object to.
         init: Determines if this object will construct.
-        **kwargs: Arbitrary keyword arguments for the parent.
+        **kwargs: Keyword arguments for the parent.
     """
 
     # Attributes #
@@ -72,9 +72,9 @@ class BaseContextualObject(ContextualObjectInterface):
         """Constructs this object.
 
         Args:
-            *args: Variable length argument list for the parent constructor.
+            *args: Positional arguments for the parent constructor.
             context: The context to assign this object to.
-            **kwargs: Arbitrary keyword arguments for the parent constructor.
+            **kwargs: Keyword arguments for the parent constructor.
         """
         if context is not None:
             self._context = context

@@ -42,9 +42,13 @@ class RNGBlock(BaseBlock):
 
     # Class Attributes #
     default_output_names: ClassVar[tuple[str, ...]] = ("out_array",)
+    default_output_signal_names: ClassVar[tuple[str, ...]] = ("done_flag",)
 
     # Attributes #
     will_produce = True
+
+    evaluation_limit: int = 0
+    n_evaluations: int = 0
 
     # Magic Methods #
     # Construction/Destruction
@@ -90,4 +94,11 @@ class RNGBlock(BaseBlock):
         Returns:
             A randomly generated array.
         """
+        if self.n_evaluations >= self.evaluation_limit:
+            self.stop_flag = True
+
         return np.random.rand(*self.shape) * self.scale - self.shift
+
+    # Teardown
+    async def teardown(self) -> None:
+        await self.outputs.put_item_async(self.signal_io_name, {"done_flag": True})

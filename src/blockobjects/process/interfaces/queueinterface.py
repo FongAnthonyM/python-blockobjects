@@ -68,14 +68,10 @@ class QueueInterface(BaseObject):
         raise NotImplemented
 
     # Join
-    def join(self) -> None:
+    def join(self, *args: Any, **kwargs: Any) -> None:
         """Blocks until all items in the Queue have been gotten."""
         pass
 
-    async def join_async(self) -> None:
-        """Asynchronously, blockgroup until all items in the Queue have been gotten.
-
-        Args:
-            interval: The time, in seconds, between each queue check.
-        """
+    async def join_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously, blocks until all items in the Queue have been gotten."""
         pass

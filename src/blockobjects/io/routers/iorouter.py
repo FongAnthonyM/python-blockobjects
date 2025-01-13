@@ -15,20 +15,20 @@ __email__ = __email__
 # Standard Libraries #
 from asyncio import gather, create_task, Task, CancelledError
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
-from collections.abc import Iterable, Callable
+from collections.abc import Iterable, Iterator, Callable
 from collections import deque
 from functools import partial
 from itertools import chain
 from typing import ClassVar, Any
-from types import MethodType
+from types import FunctionType, MethodType
 from uuid import uuid4
-from weakref import WeakKeyDictionary, WeakSet
+from weakref import WeakKeyDictionary, WeakSet, ReferenceType
 
 # Third-Party Packages #
 from baseobjects import SentinelObject, search_sentinel
 from baseobjects.collections import OrderableDict
 from baseobjects.functions import MethodMultiplexer
-import dill
+from baseobjects.objects import CallbackManager
 
 # Local Packages #
 from ...process import AsyncQueue
@@ -85,6 +85,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_get_async: ClassVar[str] = "get_all_async"
     default_put: ClassVar[str] = "put_to_all"
     default_put_async: ClassVar[str] = "put_to_all_async"
+    default_join: ClassVar[str] = "join_required"
+    default_join_async: ClassVar[str] = "join_required_async"
     default_create_link: ClassVar[str] = "create_link_pass_io"
 
     # Class Methods #
@@ -103,9 +105,11 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_io: type[BaseIO] = AsyncQueue
     required: tuple[str] | None = None
     optional_defaults: dict[str, Any] = {}
+    encapsulated: dict[int, BaseIO] = {}
 
     # Links
     id_number: int
+    _parent: ReferenceType["IORouter"] | None = None
     create_link: MethodMultiplexer
     directly_linked: WeakSet
     links_to: dict[tuple[int, str, int, str], "IORouter"]
@@ -126,12 +130,17 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     scheduled_listener_links: set[tuple[int, str, int, str]]
     listeners: dict[tuple[int, str, int, str], Task]
 
-    # Callback
-    callback: Callable[[Any], None]
-    callback_async: Callable[[Any], None]
-    callback_executor: Task | None = None
-    max_callback_tasks: int = 1
-    callback_tasks: set[Task]
+    # Callbacks
+    callback_manager: CallbackManager
+
+    # Properties
+    @property
+    def parent(self) -> "IORouter":
+        return self._parent if self._parent is None else self._parent()
+
+    @parent.setter
+    def parent(self, parent: "IORouter") -> None:
+        self.set_parent(parent)
 
     # Magic Methods #
     # Construction/Destruction
@@ -160,7 +169,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.scheduled_listener_links = set()
         self.listeners = dict()
 
-        self.callback_tasks = set()
+        self.callback_tasks = {}
+        self.callback_manager = CallbackManager()
 
         # Parent Attributes #
         super().__init__()
@@ -183,13 +193,13 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if (directly_linked := state.get("directly_linked", None)) is not None:
             state["directly_linked"] = set(directly_linked)
 
-        for name in ("get_tasks", "put_tasks", "listeners", "callback_tasks", "directly_linked"):
+        for name in ("get_tasks", "put_tasks", "listeners", "callback_tasks", "directly_linked", "_parent"):
             if name in state:
                 del state[name]
 
-        for name in ("callback", "callback_async"):
-            if (m := state.get(name, None)) is not None and (_self_ := getattr(m, "_self_",  None)) is not None:
-                del state[name]
+        # for name in ("callback", "callback_async", ):
+        #     if (m := state.get(name, None)) is not None and (_self_ := getattr(m, "_self_",  None)) is not None:
+        #         del state[name]
 
         return state
 
@@ -205,6 +215,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.listeners = dict()
         self.callback_tasks = set()
         self.directly_linked = WeakSet(state.get("directly_linked", None))
+        for en in self.encapsulated.values():
+            en._parent = ReferenceType(self)
 
     # Set Item
     def __setitem__(self, key: str, item: BaseIO) -> None:
@@ -298,6 +310,34 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
              Returns True if al the IO objects have an item in them, False otherwise.
         """
         return all(v.poll() for v in self.data.values())
+
+    def poll_required(self, required: Iterable[str] | None = None) -> bool:
+        """Checks if all required IO objects have an item in them.
+
+        Args:
+            required: The names of the required IO objects. If None, defaults to self.required or self.order.
+
+        Returns:
+            True if all required IO objects are ready, False otherwise.
+        """
+        if required := set((self.order if required is None else required)):
+            return all(v.poll() for k, v in self.data.items() if k in required)
+        else:
+            return any(v.poll() for k, v in self.data.items())
+
+    async def poll_required_async(self, required: Iterable[str] | None = None) -> bool:
+        """Asynchronously, checks if all required IO objects have an item in them.
+
+        Args:
+            required: The names of the required IO objects. If None, defaults to self.required or self.order.
+
+        Returns:
+            True if all required IO objects are ready, False otherwise.
+        """
+        if required := set((self.order if required is None else required)):
+            return all(v.poll() for k, v in self.data.items() if k in required)
+        else:
+            return any(v.poll() for k, v in self.data.items())
 
     def is_remote(self) -> bool:
         return False
@@ -412,7 +452,44 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         else:
             await self.data[keys[0]].set_recursive_async(keys[1:], io_)
 
+    # Encapsulated IO
+    def encapsulate_io(self, io_: "IORouter") -> None:
+        self.encapsulated[io_.id_number] = io_
+        io_.set_parent(self)
+
+    def encapsulated_put(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
+        self.encapsulated[id_].put(value, *arg, **kwargs)
+
+    async def encapsulated_put_async(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
+        await self.encapsulated[id_].put_async(value, *arg, **kwargs)
+
+    def encapsulated_get(self, id_: int, *args, **kwargs) -> Any:
+        return self.encapsulated[id_].get( *args, **kwargs)
+
+    async def encapsulated_get_async(self, id_: int, *args, **kwargs) -> Any:
+        return await self.encapsulated[id_].get_async(*args, **kwargs)
+
+    def encapsulated_join(self, id_: int, *args, **kwargs) -> None:
+        self.encapsulated[id_].join(*args, **kwargs)
+
+    async def encapsulated_join_async(self, id_: int, *args, **kwargs) -> None:
+        await self.encapsulated[id_].join_async(*args, **kwargs)
+
+    def create_encapsulated_wrapper(self, id_: int, *args, **kwargs) -> IOWrapper:
+        getter = partial(self.encapsulated_get, id_)
+        getter_async = partial(self.encapsulated_get_async, id)
+        putter = partial(self.encapsulated_put, id_)
+        putter_async = partial(self.encapsulated_put_async, id_)
+        joiner = partial(self.encapsulated_join, id_)
+        joiner_async = partial(self.encapsulated_join_async, id_)
+
+        return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
+
     # Linking
+    def set_parent(self, io_: "IORouter") -> None:
+        self._parent = ReferenceType(io_)
+        self.create_link.select("create_link_parent")
+
     def create_link_none(self, *args: Any, **kwargs: Any) -> None:
         return None
 
@@ -421,6 +498,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
         return self.data[name]
+
+    def create_link_parent(self, *args: Any, **kwargs: Any):
+        return self._parent().create_encapsulated_wrapper(*args, **kwargs)
 
     def link_forward(
         self,
@@ -458,6 +538,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         else:
             if destination is None:
                 self.data[source] = other
+            elif other.parent is not None and (self.parent is not other.parent):
+                self.data[source] = other.create_link_parent(source, *args, **kwargs)
             elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
                 self.data[source] = d_io
 
@@ -479,6 +561,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         else:
             if destination is None:
                 other.data[source] = self
+            elif self.parent is not None and (self.parent is not other.parent):
+                other.data[source] = self.create_link_parent(source, *args, **kwargs)
             elif (d_io := self.create_link(destination, *args, **kwargs)) is not None:
                 other.data[source] = d_io
 
@@ -525,147 +609,400 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         return endpoints
 
-    # Callback
-    def set_callbacks(self, func, func_async) -> None:
-        """Sets the callback functions.
+    # Callback Conditions
+    def create_condition_wrapper(
+        self,
+        method: str = "poll_required",
+        *args: Any,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build condition wrapper pieces
+        condition_method = getattr(self, method)
 
-        Args:
-            func: The synchronous callback function.
-            func_async: The asynchronous callback function.
-        """
-        self.callback = func
-        self.callback_async = func_async
+        # Create callback wrapper
+        def condition_wrapper(*a: Any, **k:Any) -> bool:
+            return condition_method(**(kwargs | k))
 
-    async def set_callbacks_async(self, func, func_async) -> None:
-        """Sets the callback functions.
+        # Return callback wrapper
+        return condition_wrapper
 
-        Args:
-            func: The synchronous callback function.
-            func_async: The asynchronous callback function.
-        """
-        self.callback = func
-        self.callback_async = func_async
+    def create_async_condition_wrapper(
+        self,
+        method: str = "poll_required_async",
+        *args: Any,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build condition wrapper pieces
+        condition_method = getattr(self, method)
 
-    def callback_condition(self, required: Iterable[str] | None = None, *args, **kwargs) -> bool:
-        """Checks if all required IO objects are ready for a callback.
+        # Create callback wrapper
+        async def condition_wrapper(*a: Any, **k:Any) -> bool:
+            return await condition_method(**(kwargs | k))
 
-        Args:
-            required: The names of the required IO objects. If None, defaults to self.required or self.order.
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
+        # Return callback wrapper
+        return condition_wrapper
 
-        Returns:
-            True if all required IO objects are ready, False otherwise.
-        """
-        if required := set((self.order if self.required is None else self.required) if required is None else required):
-            return all(v.poll() for k, v in self.data.items() if k in required)
+    # Callbacks
+    def create_callback_wrapper(
+        self,
+        callback: Callable,
+        get_method: str = "get",
+        callback_kwargs: dict[str, Any] | None = None,
+        get_kwargs: dict[str, Any] | None = None,
+        *args: Any,
+        as_first: bool = False,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build callback wrapper pieces
+        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
+        c_kwargs = callback_kwargs or {}
+
+        # Create callback wrapper
+        if as_first:
+            def callback_wrapper(*a: Any, **k:Any) -> None:
+                callback(get_method_(), **(c_kwargs | k))
         else:
-            return any(v.poll() for k, v in self.data.items())
+            def callback_wrapper(*a: Any, **k:Any) -> None:
+                callback(**(get_method_() | (c_kwargs | k)))
 
-    async def callback_condition_async(self, required: Iterable[str] | None = None, *args, **kwargs) -> bool:
-        """Asynchronously checks if all required IO objects are ready for a callback.
+        # Return callback wrapper
+        return callback_wrapper
 
-        Args:
-            required: The names of the required IO objects. If None, defaults to self. required or self.order.
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
+    def create_async_callback_wrapper(
+        self,
+        callback: Callable,
+        get_method: str = "get_async",
+        callback_kwargs: dict[str, Any] | None = None,
+        get_kwargs: dict[str, Any] | None = None,
+        *args: Any,
+        as_first: bool = False,
+        as_task: bool = False,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build callback wrapper pieces
+        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
+        c_kwargs = callback_kwargs or {}
 
-        Returns:
-            True if all required IO objects are ready, False otherwise.
-        """
-        if required := set((self.order if self.required is None else self.required) if required is None else required):
-            return all(v.poll() for k, v in self.data.items() if k in required)
+        # Create callback wrapper
+        if not as_first and not as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> None:
+                await callback(**(await get_method_() | (c_kwargs | k)))
+        elif not as_first and as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> Task:
+                return create_task(callback(**(await get_method_() | (c_kwargs | k))))
+        elif as_first and not as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> None:
+                await callback(await get_method_(), **(c_kwargs | k))
         else:
-            return any(v.poll() for k, v in self.data.items())
+            async def callback_wrapper(*a: Any, **k: Any) -> Task:
+                return create_task(callback(await get_method_(), **(c_kwargs | k)))
 
-    def _execute_next_callback(self, task, fut) -> None:
-        """Executes the next callback if the callback condition is met.
+        # Return callback wrapper
+        return callback_wrapper
 
-        Args:
-            task: The task that just completed.
-            fut: The future object to set the result of the task.
-        """
-        self.callback_tasks.discard(task)
-        if self.callback_condition():
-            new_task = create_task(self.callback_async(self.get_required()))
-            self.callback_tasks.add(new_task)
-            # Have the new task remove its reference and run the next callback when it's done
-            task.add_done_callback(partial(self._execute_next_callback, fut=fut))
+    def create_routing_callback_wrapper(
+        self,
+        callback: Callable,
+        get_method: str = "get",
+        put_method: str = "put",
+        callback_kwargs: dict[str, Any] | None = None,
+        get_kwargs: dict[str, Any] | None = None,
+        put_kwargs: dict[str, Any] | None = None,
+        *args: Any,
+        as_first: bool = False,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build callback wrapper pieces
+        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
+        put_method_ = partial(getattr(self, put_method), **(put_kwargs or {}))
+        c_kwargs = callback_kwargs or {}
+
+        # Create callback wrapper
+        if as_first:
+            def callback_wrapper(*a: Any, **k:Any) -> None:
+                put_method_(callback(get_method_(), **(c_kwargs | k)))
         else:
-            fut.set_result(None)
+            def callback_wrapper(*a: Any, **k:Any) -> None:
+                put_method_(callback(**(get_method_() | (c_kwargs | k))))
 
-    def execute_callback(self, *args, **kwargs) -> None:
-        """Executes the callback function while the callback condition is met.
+        # Return callback wrapper
+        return callback_wrapper
 
-        Args:
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
-        """
-        while self.callback_condition():
-            # Callback
-            self.callback(self.get_required())
+    def create_async_routing_callback_wrapper(
+        self,
+        callback: Callable,
+        get_method: str = "get_async",
+        put_method: str = "put_async",
+        callback_kwargs: dict[str, Any] | None = None,
+        get_kwargs: dict[str, Any] | None = None,
+        put_kwargs: dict[str, Any] | None = None,
+        *args: Any,
+        as_first: bool = False,
+        as_task: bool = False,
+        **kwargs: Any,
+    ) -> Callable:
+        # Build callback wrapper pieces
+        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
+        put_method_ = partial(getattr(self, put_method), **(put_kwargs or {}))
+        c_kwargs = callback_kwargs or {}
 
-    async def execute_callback_async(self, *args, **kwargs) -> None:
-        """Asynchronously executes the callback function while the callback condition is met.
+        # Create callback wrapper
+        if not as_first and not as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> None:
+                await put_method_(await callback(**(await get_method_() | (c_kwargs | k))))
+        elif not as_first and as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> Task:
+                return create_task(put_method_(create_task(callback(**(await get_method_() | (c_kwargs | k))))))
+        elif as_first and not as_task:
+            async def callback_wrapper(*a: Any, **k: Any) -> None:
+                await put_method_(await callback(await get_method_(), **(c_kwargs | k)))
+        else:
+            async def callback_wrapper(*a: Any, **k: Any) -> Task:
+                return create_task(put_method_(create_task(callback(await get_method_(), **(c_kwargs | k)))))
 
-        Args:
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
-        """
-        # Create Callback Tasks
-        task_futures = deque()
-        for i in range(self.max_callback_tasks):
-            if await self.callback_condition_async():
-                # Create Execute Task
-                task = create_task(self.callback_async(self.get_required()))
-                self.callback_tasks.add(task)
-                # Create Future
-                fut = _get_running_loop().create_future()
-                task_futures.append(fut)
-                # Have the new task remove its reference and run the next callback when it's done
-                task.add_done_callback(partial(self._execute_next_callback, fut=fut))
+        # Return callback wrapper
+        return callback_wrapper
 
-        # Wait for task futures
-        await gather(*task_futures)
+    # Callback Management
+    def register_callback(
+        self,
+        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callback is not None:
+            call_method = self.create_callback_wrapper(**callback[1])
+            cond_method = self.create_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback[3],
+            )
+        if callback_async is not None:
+            call_method = self.create_async_callback_wrapper(**callback[1])
+            cond_method = self.create_async_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback_async[3],
+            )
 
-    def remove_executor(self, task):
-        """
-        Removes the executor task.
+    async def register_callback_async(
+        self,
+        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callback is not None:
+            call_method = self.create_callback_wrapper(**callback[1])
+            cond_method = self.create_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback[3],
+            )
+        if callback_async is not None:
+            call_method = self.create_async_callback_wrapper(**callback[1])
+            cond_method = self.create_async_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback_async[3],
+            )
 
-        Args:
-            task: The task to be removed.
-        """
-        self.callback_executor = None
+    def register_callbacks(
+        self,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callbacks is not None:
+            c_manager.callbacks.update((
+                (n, c_manager.format_callback(
+                    self.create_callback_wrapper(**call),
+                    self.create_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks.items()
+            ))
+        if callbacks_async is not None:
+            c_manager.callbacks_async.update((
+                (n, c_manager.format_callback(
+                    self.create_async_callback_wrapper(**call),
+                    self.create_async_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks_async.items()
+            ))
 
-    def schedule_callback(self, *args, **kwargs) -> None:
-        """Schedules the execution of the callback function.
+    async def register_callbacks_async(
+        self,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callbacks is not None:
+            c_manager.callbacks.update((
+                (n, c_manager.format_callback(
+                    self.create_callback_wrapper(**call),
+                    self.create_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks.items()
+            ))
+        if callbacks_async is not None:
+            c_manager.callbacks_async.update((
+                (n, c_manager.format_callback(
+                    self.create_async_callback_wrapper(**call),
+                    self.create_async_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks_async.items()
+            ))
 
-        Args:
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
-        """
-        if self.callback_condition():
-            self.execute_callback(*args, **kwargs)
+    def _register_inner_callbacks(
+        self,
+        names: Iterator[str],
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        try:
+            name = next(names)
+        except StopIteration:
+            self.register_callbacks(callbacks, callbacks_async)
+        else:
+            self.data[name]._register_inner_callbacks(names, callbacks, callbacks_async)
 
-    async def schedule_callback_async(self, *args, **kwargs) -> None:
-        """Asynchronously schedules the execution of the callback function.
+    def register_inner_callbacks(
+        self,
+        names: Iterable[str] | str,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        if isinstance(names, str):
+            self.data[names].register_callbacks(callbacks=callbacks, callbacks_async=callbacks_async)
+        else:
+            self._register_inner_callbacks(iter(names), callbacks, callbacks_async)
 
-        This method checks if there's no currently executing callback and if the callback condition is met. If both
-        conditions are true, it creates a new task to execute the callback function asynchronously.
+    async def _register_inner_callbacks_async(
+        self,
+        names: Iterator[str],
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        try:
+            name = next(names)
+        except StopIteration:
+            await self.register_callbacks_async(callbacks, callbacks_async)
+        else:
+            await self.data[name]._register_inner_callbacks_async(names, callbacks, callbacks_async)
 
-        It also adds a done callback to the task to remove the executor when the task is done.
+    async def register_inner_callbacks_async(
+        self,
+        names: Iterable[str] | str,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        if isinstance(names, str):
+            await self.data[names].register_callbacks_async(callbacks=callbacks, callbacks_async=callbacks_async)
+        else:
+            await self._register_inner_callbacks_async(iter(names), callbacks, callbacks_async)
 
-        Args:
-            *args: Variable length argument list to be passed to the callback function.
-            **kwargs: Arbitrary keyword arguments to be passed to the callback function.
-        """
-        if self.callback_executor is None and await self.callback_condition_async():
-            self.callback_executor = create_task(self.execute_callback_async(*args, **kwargs))
-            self.callback_executor.add_done_callback(self.remove_executor)
+    def register_routing_callback(
+        self,
+        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callback is not None:
+            call_method = self.create_routing_callback_wrapper(**callback[1])
+            cond_method = self.create_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback[3],
+            )
+        if callback_async is not None:
+            call_method = self.create_async_routing_callback_wrapper(**callback[1])
+            cond_method = self.create_async_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback_async[3],
+            )
 
-    def cancel_callbacks(self) -> None:
-        for task in self.callback_tasks:
-            task.cancel()
+    async def register_routing_callback_async(
+        self,
+        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callback is not None:
+            call_method = self.create_routing_callback_wrapper(**callback[1])
+            cond_method = self.create_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback[3],
+            )
+        if callback_async is not None:
+            call_method = self.create_async_routing_callback_wrapper(**callback[1])
+            cond_method = self.create_async_condition_wrapper(**callback[2])
+            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+                callback=call_method,
+                condition=cond_method,
+                **callback_async[3],
+            )
+
+    def register_routing_callbacks(
+        self,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callbacks is not None:
+            c_manager.callbacks.update((
+                (n, c_manager.format_callback(
+                    self.create_routing_callback_wrapper(**call),
+                    self.create_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks.items()
+            ))
+        if callbacks_async is not None:
+            c_manager.callbacks_async.update((
+                (n, c_manager.format_callback(
+                    self.create_async_routing_callback_wrapper(**call),
+                    self.create_async_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks_async.items()
+            ))
+
+    async def register_routing_callbacks_async(
+        self,
+        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
+    ) -> None:
+        c_manager = self.callback_manager
+        if callbacks is not None:
+            c_manager.callbacks.update((
+                (n, c_manager.format_callback(
+                    self.create_routing_callback_wrapper(**call),
+                    self.create_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks.items()
+            ))
+        if callbacks_async is not None:
+            c_manager.callbacks_async.update((
+                (n, c_manager.format_callback(
+                    self.create_async_routing_callback_wrapper(**call),
+                    self.create_async_condition_wrapper(**cond),
+                    **kw,
+                ))
+                for n, (call, cond, kw) in callbacks_async.items()
+            ))
 
     # Get
     def get_item(self, name: str, **kwargs: Any) -> Any:
@@ -695,6 +1032,49 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         task.add_done_callback(self.get_tasks.discard)
         return await task
 
+    def get_items(
+        self,
+        names: Iterable[str],
+        defaults: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        # Set empty defaults
+        if defaults is None:
+            defaults = {}
+
+        # Build items from iterators
+        r_iter = ((n, self.data[n].get(*args, **kwargs)) for n in names)
+        o_iter = ((k, self.data[k].get(*args, block=False, default=v, **kwargs)) for k, v in defaults.items())
+        return dict(chain(r_iter, o_iter))
+
+    async def get_items_async(
+        self,
+        names: Iterable[str],
+        defaults: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        # Set empty defaults
+        if defaults is None:
+            defaults = {}
+
+        # Build items from iterators
+        r_iter = ((n, create_task(self.data[n].get_async(*args, **kwargs))) for n in names)
+        o_iter = (
+            (k, create_task(self.data[k].get_async(*args, block=False, default=v, **kwargs)))
+            for k, v in defaults.items()
+        )
+        tasks = dict(chain(r_iter, o_iter))
+
+        # Track tasks in get tasks
+        for v in tasks.values():
+            v.add_done_callback(self.get_tasks.discard)
+            self.get_tasks.add(v)
+
+        # Build items with an async gather
+        return dict(zip(tasks.keys(), await gather(*tasks.values())))
+
     def get_ordered(self, *args, **kwargs) -> tuple[Any, ...]:
         """Gets an item from all the IO objects.
 
@@ -716,6 +1096,89 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
         return await gather(*tasks)
+
+    def get_all(self, *args, **kwargs) -> dict[str, Any]:
+        """Gets an item from all the IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        return {k: v.get(*args, **kwargs) for k, v in self.data.items()}
+
+    async def get_all_async(self, *args, **kwargs) -> dict[str, Any]:
+        """Asynchronously gets an item from all the IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        tasks = deque()
+        for v in self.data.values():
+            t = create_task(v.get_async(*args, **kwargs))
+            tasks.append(t)
+            t.add_done_callback(self.get_tasks.discard)
+        self.get_tasks.update(tasks)
+        d = dict(zip(self.data.keys(), await gather(*tasks)))
+        return d
+
+    def get_required(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Gets an item from all required IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        required = set((self.order if self.required is None else self.required) if required is None else required)
+
+        if defaults is None:
+            defaults = self.optional_defaults
+
+        items = {}
+        for k, v in self.data.items():
+            if k in required:
+                items[k] = v.get(*args, **kwargs)
+            else:
+                items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
+        return items
+
+    async def get_required_async(
+        self,
+        required: Iterable[str] | None = None,
+        default: Any = search_sentinel,
+        defaults: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Asynchronously gets an item from the required IO objects.
+
+        Returns:
+            The first item in all the IO objects.
+        """
+        required = set((self.order if self.required is None else self.required) if required is None else required)
+
+        if defaults is None:
+            defaults = self.optional_defaults
+
+        tasks = deque()
+        for k, v in self.data.items():
+            if k in required:
+                t = create_task(v.get_async(*args, **kwargs))
+            else:
+                t = create_task(v.get_async(
+                    *args,
+                    block=False,
+                    default=defaults[k] if k in defaults else default,
+                    **kwargs
+                ))
+            tasks.append(t)
+            t.add_done_callback(self.get_tasks.discard)
+        self.get_tasks.update(tasks)
+        return dict(zip(self.data.keys(), await gather(*tasks)))
 
     def get_link_id(
         self,
@@ -807,89 +1270,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 self.callback_tasks.add(task)
                 task.add_done_callback(self.callback_tasks.discard)
 
-    def get_all(self, *args, **kwargs) -> dict[str, Any]:
-        """Gets an item from all the IO objects.
-
-        Returns:
-            The first item in all the IO objects.
-        """
-        return {k: v.get(*args, **kwargs) for k, v in self.data.items()}
-
-    async def get_all_async(self, *args, **kwargs) -> dict[str, Any]:
-        """Asynchronously gets an item from all the IO objects.
-
-        Returns:
-            The first item in all the IO objects.
-        """
-        tasks = deque()
-        for v in self.data.values():
-            t = create_task(v.get_async(*args, **kwargs))
-            tasks.append(t)
-            t.add_done_callback(self.get_tasks.discard)
-        self.get_tasks.update(tasks)
-        d = dict(zip(self.data.keys(), await gather(*tasks)))
-        return d
-
-    def get_required(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Gets an item from all required IO objects.
-
-        Returns:
-            The first item in all the IO objects.
-        """
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-
-        if defaults is None:
-            defaults = self.optional_defaults
-
-        items = {}
-        for k, v in self.data.items():
-            if k in required:
-                items[k] = v.get(*args, **kwargs)
-            else:
-                items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
-        return items
-
-    async def get_required_async(
-        self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Asynchronously gets an item from the required IO objects.
-
-        Returns:
-            The first item in all the IO objects.
-        """
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-
-        if defaults is None:
-            defaults = self.optional_defaults
-
-        tasks = deque()
-        for k, v in self.data.items():
-            if k in required:
-                t = create_task(v.get_async(*args, **kwargs))
-            else:
-                t = create_task(v.get_async(
-                    *args,
-                    block=False,
-                    default=defaults[k] if k in defaults else default,
-                    **kwargs
-                ))
-            tasks.append(t)
-            t.add_done_callback(self.get_tasks.discard)
-        self.get_tasks.update(tasks)
-        return dict(zip(self.data.keys(), await gather(*tasks)))
-
     # Put
     def put_item(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
         """Put an item into an IO object.
@@ -968,7 +1348,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         await self.data[name].put_async(value, *args, **kwargs)
 
         # Schedule Callback
-        await self.schedule_callback_async()
+        await self.schedule_callbacks_async()
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
@@ -1030,6 +1410,41 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The keyword arguments for the inner io objects' put.
         """
         await gather(*(io_object.put_async(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
+
+    # Join
+    def join_all(self, *args: Any, **kwargs: Any) -> None:
+        for io_object in self.data.values():
+            io_object.join(*args, **kwargs)
+
+    async def join_all_async(self, *args: Any, **kwargs: Any) -> None:
+        await gather(*(create_task(v.join_async(*args, **kwargs)) for v in self.data.values()))
+
+    def join_required(self, required: Iterable[str] | None = None, *args: Any, **kwargs: Any) -> None:
+        """Joins the required IO objects.
+
+        Args:
+            required: The names of the required IO objects to join.
+            *args: Positional arguments passed to the `join` method of individual containers.
+            **kwargs: Keyword arguments passed to the `join` method of individual containers.
+        """
+        required_names = set((self.order if self.required is None else self.required) if required is None else required)
+        required_io = tuple(self.data[n] for n in required_names)
+        while any(r_io.poll() for r_io in required_io):
+            for r_io in required_io:
+                r_io.join(*args, **kwargs)
+
+    async def join_required_async(self, required: Iterable[str] | None = None, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously, joins the required IO objects.
+
+        Args:
+            required: The names of the required IO objects to join.
+            *args: Positional arguments passed to the `join` method of individual containers.
+            **kwargs: Keyword arguments passed to the `join` method of individual containers.
+        """
+        required_names = set((self.order if self.required is None else self.required) if required is None else required)
+        required_io = tuple(self.data[n] for n in required_names)
+        while any(await gather(*(r_io.poll_async() for r_io in required_io))):
+            await gather(*(create_task(r_io.join_async(*args, **kwargs)) for r_io in required_io))
 
     # Tasks
     def cancel_tasks(self) -> None:

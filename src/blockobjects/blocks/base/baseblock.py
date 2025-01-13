@@ -26,7 +26,7 @@ from uuid import uuid4
 from warnings import warn
 
 # Third-Party Packages #
-from baseobjects import BaseMethod
+from baseobjects import BaseMethod, SentinelObject
 from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
 from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
@@ -122,10 +122,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     inputs: ArbitratingIOManager
     outputs: ArbitratingIOManager
 
-    signal_io_name: str = ("block_signals")
+    signal_io_name: str = "block_signals"
     signals_type: type[IORouter] = IORouter
+    signal_callback_map: dict[str, tuple[str, str, dict[str, Any]]] = {}
 
-    no_output_sentinel: Any = None
+    no_output_sentinel: Any = SentinelObject("no_output_sentinel")
 
     input_callback_method: str = "_produce"
     input_callback_method_async: str = "_produce_async"
@@ -153,8 +154,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     _production_task: Task | None = None
 
+    stop_flag: bool = False
+
     futures: list[Future]
 
+    # Properties
     @property
     def async_event_loop(self) -> AbstractEventLoop:
         if self._async_event_loop is None:
@@ -179,6 +183,14 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     def is_producing(self) -> bool:
         return self._production_task is not None
 
+    @property
+    def input_signals(self) -> IORouter:
+        return self.inputs[self.signal_io_name]
+
+    @property
+    def output_signals(self) -> IORouter:
+        return self.outputs[self.signal_io_name]
+
     # Magic Methods #
     # Construction/Destruction
     def __init__(
@@ -198,6 +210,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # New Attributes #
         # self.async_event_loop = get_event_loop()
         self._executing_waiters = deque()
+        self.signal_callback_map = self.signal_callback_map.copy()
 
         self.inputs = ArbitratingIOManager()
         self.outputs = ArbitratingIOManager()
@@ -552,29 +565,89 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 await self.outputs.update_server_io_async()
             self.sets_up_io = False
 
+    def _create_callback_info(
+        self,
+        method: str,
+        method_async: str | None = None,
+        get_method: str = "get_required",
+        get_method_async: str | None = None,
+        get_kwargs: dict[str, Any] | None = None,
+        callback_kwargs: dict[str, Any] | None = None,
+        condition_kwargs: dict[str, Any] | None = None,
+        manager_kwargs: dict[str, Any] | None = None,
+        as_proxy: bool = True,
+    ) -> tuple[tuple[dict[str, Any], dict[str, Any], dict[str, Any]], ...]:
+        # Create Generic Methods for callback
+        def callback(obj, inputs: dict[str, Any]) -> None:
+            return getattr(obj, method)(inputs)
+
+        if method_async is None:
+            async def callback_async(obj, inputs: dict[str, Any]) -> None:
+                return getattr(obj, method)(inputs)
+        else:
+            async def callback_async(obj, inputs: dict[str, Any]) -> None:
+                return await getattr(obj, method_async)(inputs)
+
+        # Use BaseMethod because it uses weak references
+        instance = self._proxy if as_proxy and self.is_alive() else self
+        method = BaseMethod(func=callback, instance=instance)
+        method_async = BaseMethod(func=callback_async, instance=instance)
+
+        # Set defaults
+        if get_kwargs is None:
+            get_kwargs = {}
+        if callback_kwargs is None:
+            callback_kwargs = {}
+        if condition_kwargs is None:
+            condition_kwargs = {}
+        if manager_kwargs is None:
+            manager_kwargs = {}
+
+        # Create formatted tuples to pass to callback registration
+        callback_info = (
+            {"callback": method, "get_method": get_method, "get_kwargs": get_kwargs} | callback_kwargs,
+            {"method": "poll_required"} | condition_kwargs,
+            {"evaluator": "evaluate_callbacks"},
+        )
+        callback_async_info = (
+            {
+                "callback": method_async,
+                "get_method": get_method_async or f"{get_method}_async",
+                "get_kwargs": get_kwargs,
+                "as_task": True,
+            } | callback_kwargs,
+            {"method": "poll_required_async"} | condition_kwargs,
+            {"evaluator": "evaluate_task_callbacks_async"} | manager_kwargs,
+        )
+
+        return callback_info, callback_async_info
+
     def set_input_callback(
         self,
         name: str | None = None,
         name_async: str | None = None,
         as_proxy: bool = True,
     ) -> None:
+        # Select Methods from given names
         if name is None:
             name = self.input_callback_method
 
         if name_async is None:
             name_async = self.input_callback_method_async
 
-        def callback(obj, inputs: dict[str, Any]) -> None:
-            return getattr(obj, name)(inputs)
+        # Create Callback info
+        callback_info, callback_async_info = self._create_callback_info(
+            method=name,
+            method_async=name_async,
+            get_method="get_required",
+            get_method_async="get_required_async",
+            get_kwargs={"required": self.inputs.required},
+            callback_kwargs={"as_first": True},
+            condition_kwargs={"required": self.inputs.required},
+            as_proxy=as_proxy,
+        )
 
-        async def callback_async(obj, inputs: dict[str, Any]) -> None:
-            return await getattr(obj, name_async)(inputs)
-
-        # Use BaseMethod because it uses weak references
-        instance = self._proxy if as_proxy and self.is_alive() else self
-        method = BaseMethod(func=callback, instance=instance)
-        method_async = BaseMethod(func=callback_async, instance=instance)
-        self.inputs.set_callbacks(method, method_async)
+        self.inputs.register_callback(("input",) + callback_info, ("input",) +callback_async_info)
 
     async def set_input_callback_async(
         self,
@@ -582,22 +655,53 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         name_async: str | None = None,
         as_proxy: bool = False,
     ) -> None:
+        # Select Methods from given names
         if name is None:
             name = self.input_callback_method
 
         if name_async is None:
             name_async = self.input_callback_method_async
 
-        def callback(obj, inputs: dict[str, Any]) -> None:
-            return getattr(obj, name)(inputs)
+        # Create Callback info
+        callback_info, callback_async_info = self._create_callback_info(
+            method=name,
+            method_async=name_async,
+            get_method="get_required",
+            get_method_async="get_required_async",
+            get_kwargs={"required": self.inputs.required},
+            callback_kwargs={"as_first": True},
+            condition_kwargs={"required": self.inputs.required},
+            as_proxy=as_proxy,
+        )
 
-        async def callback_async(obj, inputs: dict[str, Any]) -> None:
-            return await getattr(obj, name_async)(inputs)
+        await self.inputs.register_callback_async(("input",) + callback_info, ("input",) + callback_async_info)
 
-        # Use BaseMethod because it uses weak references
-        method = BaseMethod(func=callback, instance=self._proxy if as_proxy else self)
-        method_async = BaseMethod(func=callback_async, instance=self._proxy if as_proxy else self)
-        await self.inputs.set_callbacks_async(method, method_async)
+    def format_signal_callback_entry(self, entry: tuple) -> dict[str, Any]:
+        return {
+            "method": entry[0],
+            "get_method": "get_items",
+            "get_kwargs": {"names": entry[1]},
+            "condition_kwargs": {"required": entry[1]},
+            "as_proxy": True,
+        } | entry[2]
+
+    def set_signal_callbacks(self) -> None:
+        callbacks = {}
+        callbacks_async = {}
+        for name, entry in self.signal_callback_map.items():
+            new_kwargs = self.format_signal_callback_entry(entry)
+            callbacks[name], callbacks_async[name] = self._create_callback_info(**new_kwargs)
+
+        self.inputs.register_inner_callbacks(self.signal_io_name, callbacks, callbacks_async)
+
+    async def set_signal_callbacks_async(self) -> None:
+        callbacks = {}
+        callbacks_async = {}
+        for name, entry in self.signal_callback_map.items():
+            new_kwargs = self.format_signal_callback_entry(entry)
+            callbacks[name], callbacks_async[name] = self._create_callback_info(**new_kwargs)
+
+        await self.inputs.register_inner_callbacks_async(self.signal_io_name, callbacks, callbacks_async)
 
     def finalize_io(self) -> None:
         self.set_input_callback()
@@ -749,6 +853,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             # If outputs are valid, format and send them to the output manager
             self.put_output(self.format_output(outputs, ids))
 
+        # Stop executing
+        if self.stop_flag:
+            self.stop()
+
     def execute(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
             self._execute(*args, **kwargs)
@@ -758,6 +866,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         inputs, ids = self.format_input(await self.get_input_async())
         if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
             await self.put_output_async(self.format_output(outputs, ids))
+
+        if self.stop_flag:
+            await self.stop_async()
 
     async def execute_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
@@ -1049,7 +1160,16 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             await self._start_async(s_kwargs)
 
     # Stop Block
-    async def _stop_block_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
+    async def _stop_block_async(
+        self,
+        t_kwargs: dict[str, Any] | None = None,
+        join_io: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        # Join IO
+        if join_io:
+            await self.inputs.join_async(**join_kwargs)
+
         # Stop Production Task
         if self._production_task is not None:
             self.clear_loop_event()
@@ -1066,12 +1186,24 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
         self._clear_executing()
 
-    async def stop_block_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
-        await self._stop_block_async(t_kwargs)
+    async def stop_block_async(
+        self,
+        t_kwargs: dict[str, Any] | None = None,
+        join_io: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        await self._stop_block_async(t_kwargs, join_io, join_kwargs)
         await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
         await gather(*(self.inputs.stop_server_async(update=False), self.outputs.stop_server_async(update=False)))
 
-    def stop(self, t_kwargs: dict[str, Any] | None = None, server: bool = True, update: bool = True) -> None:
+    def stop(
+        self,
+        t_kwargs: dict[str, Any] | None = None,
+        server: bool = True,
+        update: bool = True,
+        join_io: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
+    ) -> None:
         """Stops the execution of this block, optionally stopping the server relative to this object.
 
         Args:
@@ -1079,16 +1211,16 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            self._proxy.stop_block_async(t_kwargs)
+            self._proxy.stop_block_async(t_kwargs, join_io, join_kwargs)
             if update:
                 self.join_execution()
             self._stop_server(update)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._stop_block_async(t_kwargs), loop)
+            run_coroutine_threadsafe(self._stop_block_async(t_kwargs, join_io, join_kwargs), loop)
             self.inputs.stop()
             self.outputs.stop()
         else:
-            run(self._stop_block_async(t_kwargs))
+            run(self._stop_block_async(t_kwargs, join_io, join_kwargs))
             self.inputs.stop()
             self.outputs.stop()
 
@@ -1097,6 +1229,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         t_kwargs: dict[str, Any] | None = None,
         server: bool = True,
         update: bool = True,
+        join_io: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Asynchronously Stops the execution of this block, optionally stopping the server relative to this object.
 
@@ -1105,12 +1239,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            await self._proxy.stop_block_async(t_kwargs)
+            await self._proxy.stop_block_async(t_kwargs, join_io, join_kwargs)
             if update:
                 await self.join_execution_async()
             await self._stop_server_async(update)
         else:
-            await self._stop_block_async(t_kwargs)
+            await self._stop_block_async(t_kwargs, join_io, join_kwargs)
             await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     # Join Execution
