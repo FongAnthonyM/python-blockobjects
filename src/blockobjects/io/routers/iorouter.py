@@ -1,6 +1,8 @@
 """ iorouter.py
 An IO object which maps inputs to outputs.
 """
+from sqlalchemy.ext.mutable import MutableDict
+
 # Package Header #
 from ...header import *
 
@@ -15,8 +17,8 @@ __email__ = __email__
 # Standard Libraries #
 from asyncio import gather, create_task, Task, CancelledError
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
-from collections.abc import Iterable, Iterator, Callable
-from collections import deque
+from collections.abc import Iterable, Iterator, Callable, MutableMapping, Generator
+from collections import deque, ChainMap
 from functools import partial
 from itertools import chain
 from typing import ClassVar, Any
@@ -25,7 +27,7 @@ from uuid import uuid4
 from weakref import WeakKeyDictionary, WeakSet, ReferenceType
 
 # Third-Party Packages #
-from baseobjects import SentinelObject, search_sentinel
+from baseobjects import SentinelObject, DEFAULTSENTINEL
 from baseobjects.collections import OrderableDict
 from baseobjects.functions import MethodMultiplexer
 from baseobjects.objects import CallbackManager
@@ -36,8 +38,12 @@ from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
 
 
 # Definitions #
+# Typing
+IOGroupType = MutableMapping[str | int, BaseIO ]
+IOGroupTypeMap = MutableMapping[str, IOGroupType]
+
 # Classes #
-class IORouter(BaseIOMultiplexer, OrderableDict):
+class IORouter(BaseIOMultiplexer):
     """An IO object which maps inputs to outputs, facilitating the routing of data between different IO objects.
 
     It supports synchronous and asynchronous operations, allowing for flexible data handling in various contexts.
@@ -51,7 +57,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     Attributes:
         break_sentinel: A sentinel object used to indicate a break condition in IO operations.
-        default_io: The default IO object type to use when constructing new IO objects.
+        default_io_type: The default IO object type to use when constructing new IO objects.
         required: A tuple of required IO object names for certain operations, or None if not applicable.
         optional_defaults: A dictionary of default values for optional IO objects.
         id_number: A unique identifier for the IORouter instance.
@@ -85,8 +91,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     default_get_async: ClassVar[str] = "get_all_async"
     default_put: ClassVar[str] = "put_to_all"
     default_put_async: ClassVar[str] = "put_to_all_async"
-    default_join: ClassVar[str] = "join_required"
-    default_join_async: ClassVar[str] = "join_required_async"
+    default_join: ClassVar[str] = "join_groups"
+    default_join_async: ClassVar[str] = "join_groups_async"
     default_create_link: ClassVar[str] = "create_link_pass_io"
 
     # Class Methods #
@@ -101,12 +107,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     # Attributes #
     break_sentinel: SentinelObject = SentinelObject("io_break")
 
-    # IO
-    default_io: type[BaseIO] = AsyncQueue
-    required: tuple[str] | None = None
-    optional_defaults: dict[str, Any] = {}
-    encapsulated: dict[int, BaseIO] = {}
-
     # Links
     id_number: int
     _parent: ReferenceType["IORouter"] | None = None
@@ -116,6 +116,18 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     links_from: dict[tuple[int, str, int, str], "IORouter"]
     endpoints: dict[tuple[int, str, int, str], tuple["IORouter", str, "IORouter", str]]
     endpoint_tasks: set[Task]
+
+    # Callbacks
+    callback_manager: CallbackManager
+
+    # IO
+    hidden_groups: set[str] = {"encapsulated"}
+    _visible_groups: set[str] | None = None
+    default_io_type: type[BaseIO] = AsyncQueue
+    default_values: dict[str, dict[str, Any]] = {}
+
+    io_objects: ChainMap[str | int, BaseIO]
+    io_groups: IOGroupTypeMap
 
     # Get/Put Tasks
     wrapped_getter: str | None = None
@@ -130,9 +142,6 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     scheduled_listener_links: set[tuple[int, str, int, str]]
     listeners: dict[tuple[int, str, int, str], Task]
 
-    # Callbacks
-    callback_manager: CallbackManager
-
     # Properties
     @property
     def parent(self) -> "IORouter":
@@ -142,18 +151,31 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     def parent(self, parent: "IORouter") -> None:
         self.set_parent(parent)
 
+    @property
+    def visible_groups(self) -> set[str]:
+        return set(self.io_groups.keys()) - self.hidden_groups if self._visible_groups is None else self._visible_groups
+
+    @visible_groups.setter
+    def visible_groups(self, groups: set[str] | None) -> None:
+        self._visible_groups = groups
+
+    @property
+    def encapsulated(self) -> MutableMapping[int, BaseIO]:
+        return self.io_groups["encapsulated"]
+
     # Magic Methods #
     # Construction/Destruction
     def __init__(
         self,
-        io_: dict[str, BaseIO | None] | None = None,
-        names: Iterable[str] | None = None,
+        io_: IOGroupTypeMap | MutableMapping[str, Iterable[str | int]] | Iterable[str | int] | None = None,
+        visible_groups: Iterable[str] | None | SentinelObject = DEFAULTSENTINEL,
+        hidden_groups: Iterable[str] | None = None,
         *args: Any,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
         # Attributes #
-        self.optional_defaults = self.optional_defaults.copy()
+        self.default_values = self.default_values.copy()
 
         self.id_number = uuid4().int
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
@@ -163,21 +185,29 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         self.endpoints = {}
         self.endpoint_tasks = set()
 
+        self.callback_manager = CallbackManager()
+
+        self.hidden_groups = self.hidden_groups.copy()
+        if self._visible_groups is not None:
+            self.visible_groups = self.visible_groups.copy()
+
+        __default__ = OrderableDict()
+        encapsulated = OrderableDict()
+        self.io_objects = ChainMap(__default__, encapsulated)
+        self.io_groups = {"__default__": __default__, "encapsulated": encapsulated}
+
         self.get_tasks = set()
         self.put_tasks = set()
 
         self.scheduled_listener_links = set()
         self.listeners = dict()
 
-        self.callback_tasks = {}
-        self.callback_manager = CallbackManager()
-
         # Parent Attributes #
         super().__init__()
 
         # Construction #
         if init:
-            self.construct(io_, names, *args, **kwargs)
+            self.construct(io_, visible_groups, *args, **kwargs)
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
@@ -226,17 +256,18 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             key: The name of the IO to set.
             item: The IO object to set.
         """
-        if (io_object := self.data.get(key, None)) is not None and isinstance(io_object, IOForwarder):
+        if (io_object := self.io_objects.get(key, None)) is not None and isinstance(io_object, IOForwarder):
             io_object.io = item
         else:
-            self.data[key] = item
+            self.io_objects[key] = item
 
     # Instance Methods #
     # Constructors/Destructors
     def construct(
         self,
-        io_: dict[str, BaseIO | None] | None = None,
-        names: Iterable[str] | None = None,
+        io_: IOGroupTypeMap | MutableMapping[str, Iterable[str | int]] | Iterable[str | int] | None = None,
+        visible_groups: Iterable[str] | None | SentinelObject = DEFAULTSENTINEL,
+        hidden_groups: Iterable[str] | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -244,15 +275,25 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         Args:
             io_: The input/outputs to be managed.
-            names: The names of IO to create and manage.
             *args: Arguments for inheritance.
             **kwargs: Keyword arguments for inheritance.
         """
-        if names is not None:
-            self.create_io(name=names)
+        if isinstance(io_, MutableMapping):
+            if isinstance(next(iter(io_.values())), MutableMapping):
+                self.require_io_groups(io_)
+            else:
+                self.create_ios(groups=io_)
+        elif isinstance(io_, str):
+            self.create_io(io_)
+        else:
+            self.create_ios(names=io_)
 
-        if io_ is not None:
-            self.update_io(io_)
+        if visible_groups is not DEFAULTSENTINEL:
+            self._visible_groups = visible_groups if visible_groups is not None else set(visible_groups)
+
+        if hidden_groups is not None:
+            self.hidden_groups.clear()
+            self.hidden_groups.update(hidden_groups)
 
         super().construct(*args, **kwargs)
 
@@ -269,23 +310,23 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The result of checking all IO objects in this object.
         """
-        return {k: v.empty() for k, v in self.data.items()}
+        return {k: v.empty() for k, v in self.iter_visible_io_items()}
 
     def empty_any(self) -> bool:
-        """Checks if any of the IO objects in this object are empty.
+        """Checks if any visible IO objects in this object are empty.
 
         Returns:
             Returns True if any of the IO objects are empty, False otherwise.
         """
-        return any(v.empty() for v in self.data.values())
+        return any(v.empty() for v in self.iter_visible_io_values())
 
     def empty_all(self) -> bool:
-        """Checks if all the IO objects in this object are empty.
+        """Checks if all visible IO objects in this object are empty.
 
         Returns:
              Returns True if al the IO objects are empty, False otherwise.
         """
-        return all(v.empty() for v in self.data.values())
+        return all(v.empty() for v in self.iter_visible_io_values())
 
     def poll_io(self) -> dict[str, bool]:
         """Polls the IO objects in this object.
@@ -293,56 +334,72 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The result of polling the IO objects in this object.
         """
-        return {k: v.poll() for k, v in self.data.items()}
+        return {k: v.poll() for k, v in self.iter_visible_io_items()}
 
     def poll_any(self) -> bool:
-        """Checks if any of the IO objects in this object have an item in them.
+        """Checks if any visible IO objects in this object have an item in them.
 
         Returns:
             Returns True if any of the IO objects have an item in them, False otherwise.
         """
-        return any(v.poll() for v in self.data.values())
+        return any(v.poll() for v in self.iter_visible_io_values())
 
     def poll_all(self) -> bool:
-        """Checks if all the IO objects in this object have an item in them.
+        """Checks if all visible IO objects in this object have an item in them.
 
         Returns:
              Returns True if al the IO objects have an item in them, False otherwise.
         """
-        return all(v.poll() for v in self.data.values())
+        return all(v.poll() for v in self.iter_visible_io_values())
 
-    def poll_required(self, required: Iterable[str] | None = None) -> bool:
-        """Checks if all required IO objects have an item in them.
-
-        Args:
-            required: The names of the required IO objects. If None, defaults to self.required or self.order.
+    def poll_all_ios(self, names: Iterable[str]) -> bool:
+        """Checks if all given IO objects in this object have an item in them.
 
         Returns:
-            True if all required IO objects are ready, False otherwise.
+             Returns True if al the IO objects have an item in them, False otherwise.
         """
-        if required := set((self.order if required is None else required)):
-            return all(v.poll() for k, v in self.data.items() if k in required)
-        else:
-            return any(v.poll() for k, v in self.data.items())
+        return all(self.io_objects[n] for n in names)
 
-    async def poll_required_async(self, required: Iterable[str] | None = None) -> bool:
-        """Asynchronously, checks if all required IO objects have an item in them.
-
-        Args:
-            required: The names of the required IO objects. If None, defaults to self.required or self.order.
+    async def poll_all_ios_async(self, names: Iterable[str]) -> bool:
+        """Asynchronously, checks if all given IO objects in this object have an item in them.
 
         Returns:
-            True if all required IO objects are ready, False otherwise.
+             Returns True if al the IO objects have an item in them, False otherwise.
         """
-        if required := set((self.order if required is None else required)):
-            return all(v.poll() for k, v in self.data.items() if k in required)
-        else:
-            return any(v.poll() for k, v in self.data.items())
+        return all(self.io_objects[n] for n in names)
+
+    def poll_groups(self, *args: str, groups: Iterable[str] | str | None) -> bool:
+        """Checks if all IO objects within given groups have an item in them.
+
+        Args:
+            *args: The names of the groups to poll
+            groups: Either an iterable of the groups to poll or string of a group to poll.
+
+        Returns:
+            True if all IO objects have an item in them.
+        """
+        return all(v.poll() for v in self.iter_groups_io_values(*args, groups=groups))
+
+    async def poll_groups_async(self, *args: str, groups: Iterable[str] | str | None) -> bool:
+        """Asynchronously, checks if all IO objects within given groups have an item in them.
+
+        Args:
+            *args: The names of the groups to poll
+            groups: Either an iterable of the groups to poll or string of a group to poll.
+
+        Returns:
+            True if all IO objects have an item in them.
+        """
+        return all(v.poll() for v in self.iter_groups_io_values(*args, groups=groups))
 
     def is_remote(self) -> bool:
+        """Checks if this object is remote."""
         return False
 
     # Ordering
+    def get_order(self) -> tuple[str, ...]:
+        return tuple(self.iter_visible_io_keys())
+
     def ordered_to_dict(self, ordered: Iterable[Any]) -> dict[str, Any]:
         """Creates a dictionary from an ordered iterable based on the order of this IO.
 
@@ -352,7 +409,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The dictionary of the ordered items.
         """
-        return dict(zip(self.order, ordered))
+        return dict(zip(self.iter_visible_io_keys(), ordered))
 
     def dict_to_ordered(self, dict_: dict[str, Any]) -> tuple[Any, ...]:
         """Creates an ordered tuple from dictionary based on the order of this IO.
@@ -363,49 +420,103 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The tuple of the ordered items.
         """
-        return tuple(dict_.get(name) for name in self.order)
+        return tuple(dict_.get(name) for name in self.iter_visible_io_keys())
 
     # IO Objects
+    def require_io_group(
+        self,
+        group: str,
+        io_: IOGroupType | None,
+    ) -> MutableMapping[str | int, BaseIO]:
+        if (g := self.io_groups.get(group, None)) is None:
+            self.io_groups[group] = g = OrderableDict(io_)
+            self.io_objects.maps.append(g)
+        return g
+
+    def require_io_groups(
+        self,
+        groups: IOGroupTypeMap,
+    ) -> dict[str, MutableMapping[str | int, BaseIO]]:
+        return {n: self.require_io_group(n, io_) for n, io_ in groups.items()}
+
+    def pop_io_group(self, group: str) -> MutableMapping[str | int, BaseIO]:
+        g = self.io_groups.pop(group)
+        self.io_objects.maps.remove(g)
+        return g
+
+    def delete_io_group(self, group: str) -> None:
+        g = self.io_groups.pop(group)
+        self.io_objects.maps.remove(g)
+
     def create_io(
         self,
-        name: str | Iterable[str],
+        name: str | int,
+        group: str = "__default__",
         type_: type[BaseIO] | None = None,
         *args: Any,
         **kwargs: Any,
-    ) -> None:
-        """Creates a new named IO object or new IO objects from a list of names.
+    ) -> BaseIO:
+        """Creates a new named IO object.
 
         Args:
             name: The key name of the IO to create.
+            group: The group which the new IO will be under.
             type_: The type of IO to create.
-            *args: The arguments for constructing the new IO object.
-            **kwargs: The keyword arguments for constructing the new IO object.
+            *args: Positional arguments for constructing the new IO object.
+            **kwargs: Keyword arguments for constructing the new IO object.
         """
         if type_ is None:
-            type_ = self.default_io
+            type_ = self.default_io_type
 
-        if isinstance(name, str):
-            name = (name,)
+        io_ = type_(*args, **kwargs)
 
-        for n in name:
-            if n not in self.data:
-                self.order.append(n)
-            self.data[n] = type_(*args, **kwargs)
+        if (g := self.io_groups.get(group, None)) is None:
+            self.io_groups[group] = g = OrderableDict(name=io_)
+            self.io_objects.maps.append(g)
+        else:
+            g[name] = io_
 
-    def build_io(self, *args: Any, **kwargs: Any) -> None:
-        for k, io_ in self.data.items():
-            if (build_method := getattr(io_, "build_io", None)) is not None:
-                build_method()
+        return io_
 
-    def update_io(self, __m: Any = {}, /, **kwargs) -> None:
-        """Updates this object's items. Nones are replaced with the default io type.
+    def create_ios(
+        self,
+        names: Iterable[str | int] | None = None,
+        group: str = "__default__",
+        groups: MutableMapping[str, Iterable[str | int]] | None = None,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, dict[str | int, BaseIO]]:
+        """Creates a new named IO object or new IO objects from a list of names.
 
         Args:
-            __m: A mapping with io objects which will replace items in this manager.
-            **kwargs: Io objects which will replace items in this manager.
+            names: The key names of the IOs to create.
+            group: The group name which the new IOs will be under.
+            groups: Groups which create new IOs under with their names.
+            type_: The type of IO to create.
+            *args: Positional arguments for constructing the new IO object.
+            **kwargs: Keyword arguments for constructing the new IO object.
         """
-        items = (kwargs if __m is None else (__m | kwargs))
-        self.update({k: (self.default_io() if v is None else v) for k, v in items.items()})
+        if type_ is None:
+            type_ = self.default_io_type
+
+        groups = groups or {} | {} if names is None else {group: names}
+
+        new_groups = {}
+        for group_name, io_names in groups.items():
+            new_groups[group_name] = ios = {n: type_(*args, **kwargs) for n in io_names}
+            if (g := self.io_groups.get(group_name, None)) is None:
+                self.io_groups[group] = g = OrderableDict(ios)
+                self.io_objects.maps.append(g)
+            else:
+                g.update(ios)
+
+        return new_groups
+
+    def build_io(self, *args: Any, **kwargs: Any) -> None:
+        for k, io_ in self.iter_visible_io_items():
+            if (build_method := getattr(io_, "build_io", None)) is not None:
+                build_method()
 
     def create_io_wrapper(self, name: str, *args: Any, **kwargs: Any) -> IOWrapper:
 
@@ -424,60 +535,81 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         return IOWrapper(getter, getter_async, putter, putter_async)
 
     def get_deepest(self) -> dict:
-        return {k: (v.get_deepest() if isinstance(v, IORouter) else v) for k, v in self.data.items()}
+        return {k: (v.get_deepest() if isinstance(v, IORouter) else v) for k, v in self.iter_visible_io_items()}
 
     def set_deepest(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
             if isinstance(v, dict):
-                self.data[k].set_deepest(v)
+                self.io_objects[k].set_deepest(v)
             else:
-                self.data[k] = v
+                self.io_objects[k] = v
 
     async def set_deepest_async(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
             if isinstance(v, dict):
-                self.data[k].set_deepest(v)
+                self.io_objects[k].set_deepest(v)
             else:
-                self.data[k] = v
+                self.io_objects[k] = v
 
     def set_recursive(self, keys: tuple[str, ...], io_: BaseIO) -> None:
         if len(keys) == 1:
-            self.data[keys[0]] = io_
+            self.io_objects[keys[0]] = io_
         else:
-            self.data[keys[0]].set_recursive(keys[1:], io_)
+            self.io_objects[keys[0]].set_recursive(keys[1:], io_)
 
     async def set_recursive_async(self, keys: tuple[str, ...], io_: BaseIO) -> None:
         if len(keys) == 1:
-            self.data[keys[0]] = io_
+            self.io_objects[keys[0]] = io_
         else:
-            await self.data[keys[0]].set_recursive_async(keys[1:], io_)
+            await self.io_objects[keys[0]].set_recursive_async(keys[1:], io_)
+
+    def iter_groups_io_keys(self, *args: str, groups: Iterable[str] | str | None) -> Iterable[str]:
+        group_names = args if groups is None else chain(args, (groups,) if isinstance(groups, str) else groups)
+        return chain.from_iterable(self.io_groups.get(n, {}).keys() for n in group_names)
+
+    def iter_groups_io_values(self, *args, groups: Iterable[str] | str | None) -> Iterable[BaseIO]:
+        group_names = args if groups is None else chain(args, (groups,) if isinstance(groups, str) else groups)
+        return chain.from_iterable(self.io_groups.get(n, {}).values() for n in group_names)
+
+    def iter_groups_io_items(self, *args, groups: Iterable[str] | str | None) -> Iterable[tuple[str, BaseIO]]:
+        group_names = args if groups is None else chain(args, (groups,) if isinstance(groups, str) else groups)
+        return chain.from_iterable(self.io_groups.get(n, {}).items() for n in group_names)
+
+    def iter_visible_io_keys(self) -> Iterable[str]:
+        return chain.from_iterable(self.io_groups.get(n, {}).keys() for n in self.visible_groups)
+
+    def iter_visible_io_values(self) -> Iterable[BaseIO]:
+        return chain.from_iterable(self.io_groups.get(n, {}).values() for n in self.visible_groups)
+
+    def iter_visible_io_items(self) -> Iterable[tuple[str, BaseIO]]:
+        return chain.from_iterable(self.io_groups.get(n, {}).items() for n in self.visible_groups)
 
     # Encapsulated IO
     def encapsulate_io(self, io_: "IORouter") -> None:
-        self.encapsulated[io_.id_number] = io_
+        self.io_groups["encapsulated"][io_.id_number] = io_
         io_.set_parent(self)
 
     def encapsulated_put(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
-        self.encapsulated[id_].put(value, *arg, **kwargs)
+        self.io_groups["encapsulated"][id_].put(value, *arg, **kwargs)
 
     async def encapsulated_put_async(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
-        await self.encapsulated[id_].put_async(value, *arg, **kwargs)
+        await self.io_groups["encapsulated"][id_].put_async(value, *arg, **kwargs)
 
     def encapsulated_get(self, id_: int, *args, **kwargs) -> Any:
-        return self.encapsulated[id_].get( *args, **kwargs)
+        return self.io_groups["encapsulated"][id_].get( *args, **kwargs)
 
     async def encapsulated_get_async(self, id_: int, *args, **kwargs) -> Any:
-        return await self.encapsulated[id_].get_async(*args, **kwargs)
+        return await self.io_groups["encapsulated"][id_].get_async(*args, **kwargs)
 
     def encapsulated_join(self, id_: int, *args, **kwargs) -> None:
-        self.encapsulated[id_].join(*args, **kwargs)
+        self.io_groups["encapsulated"][id_].join(*args, **kwargs)
 
     async def encapsulated_join_async(self, id_: int, *args, **kwargs) -> None:
-        await self.encapsulated[id_].join_async(*args, **kwargs)
+        await self.io_groups["encapsulated"][id_].join_async(*args, **kwargs)
 
     def create_encapsulated_wrapper(self, id_: int, *args, **kwargs) -> IOWrapper:
         getter = partial(self.encapsulated_get, id_)
-        getter_async = partial(self.encapsulated_get_async, id)
+        getter_async = partial(self.encapsulated_get_async, id_)
         putter = partial(self.encapsulated_put, id_)
         putter_async = partial(self.encapsulated_put_async, id_)
         joiner = partial(self.encapsulated_join, id_)
@@ -497,7 +629,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         return self
 
     def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
-        return self.data[name]
+        return self.io_objects[name]
 
     def create_link_parent(self, *args: Any, **kwargs: Any):
         return self._parent().create_encapsulated_wrapper(*args, **kwargs)
@@ -534,14 +666,14 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if self.is_listen_link(self, other):
             other.scheduled_listener_links.add(key)
             if destination is None:
-                self.data[source] = other
+                self.io_objects[source] = other
         else:
             if destination is None:
-                self.data[source] = other
+                self.io_objects[source] = other
             elif other.parent is not None and (self.parent is not other.parent):
-                self.data[source] = other.create_link_parent(source, *args, **kwargs)
+                self.io_objects[source] = other.create_link_parent(source, *args, **kwargs)
             elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
-                self.data[source] = d_io
+                self.io_objects[source] = d_io
 
     def link_backward(
         self,
@@ -557,14 +689,14 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         if self.is_listen_link(other, self):
             self.scheduled_listener_links.add(key)
             if destination is None:
-                other.data[source] = self
+                other.io_objects[source] = self
         else:
             if destination is None:
-                other.data[source] = self
+                other.io_objects[source] = self
             elif self.parent is not None and (self.parent is not other.parent):
-                other.data[source] = self.create_link_parent(source, *args, **kwargs)
+                other.io_objects[source] = self.create_link_parent(source, *args, **kwargs)
             elif (d_io := self.create_link(destination, *args, **kwargs)) is not None:
-                other.data[source] = d_io
+                other.io_objects[source] = d_io
 
     def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
         return self.links_from
@@ -584,7 +716,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
        Returns:
            The links of this IO object.
        """
-        return {n: m.generate_io_map() for n, m in self.data}
+        return {n: m.generate_io_map() for n, m in self.iter_visible_io_items()}
 
     def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
         if endpoints is None:
@@ -612,7 +744,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     # Callback Conditions
     def create_condition_wrapper(
         self,
-        method: str = "poll_required",
+        method: str = "poll_groups",
         *args: Any,
         **kwargs: Any,
     ) -> Callable:
@@ -628,7 +760,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
     def create_async_condition_wrapper(
         self,
-        method: str = "poll_required_async",
+        method: str = "poll_groups_async",
         *args: Any,
         **kwargs: Any,
     ) -> Callable:
@@ -779,9 +911,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 **callback[3],
             )
         if callback_async is not None:
-            call_method = self.create_async_callback_wrapper(**callback[1])
-            cond_method = self.create_async_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+            call_method = self.create_async_callback_wrapper(**callback_async[1])
+            cond_method = self.create_async_condition_wrapper(**callback_async[2])
+            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -802,9 +934,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 **callback[3],
             )
         if callback_async is not None:
-            call_method = self.create_async_callback_wrapper(**callback[1])
-            cond_method = self.create_async_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+            call_method = self.create_async_callback_wrapper(**callback_async[1])
+            cond_method = self.create_async_condition_wrapper(**callback_async[2])
+            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -871,7 +1003,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         except StopIteration:
             self.register_callbacks(callbacks, callbacks_async)
         else:
-            self.data[name]._register_inner_callbacks(names, callbacks, callbacks_async)
+            self.io_objects[name]._register_inner_callbacks(names, callbacks, callbacks_async)
 
     def register_inner_callbacks(
         self,
@@ -880,7 +1012,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
     ) -> None:
         if isinstance(names, str):
-            self.data[names].register_callbacks(callbacks=callbacks, callbacks_async=callbacks_async)
+            self.io_objects[names].register_callbacks(callbacks=callbacks, callbacks_async=callbacks_async)
         else:
             self._register_inner_callbacks(iter(names), callbacks, callbacks_async)
 
@@ -895,7 +1027,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         except StopIteration:
             await self.register_callbacks_async(callbacks, callbacks_async)
         else:
-            await self.data[name]._register_inner_callbacks_async(names, callbacks, callbacks_async)
+            await self.io_objects[name]._register_inner_callbacks_async(names, callbacks, callbacks_async)
 
     async def register_inner_callbacks_async(
         self,
@@ -904,7 +1036,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
     ) -> None:
         if isinstance(names, str):
-            await self.data[names].register_callbacks_async(callbacks=callbacks, callbacks_async=callbacks_async)
+            await self.io_objects[names].register_callbacks_async(callbacks=callbacks, callbacks_async=callbacks_async)
         else:
             await self._register_inner_callbacks_async(iter(names), callbacks, callbacks_async)
 
@@ -923,9 +1055,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 **callback[3],
             )
         if callback_async is not None:
-            call_method = self.create_async_routing_callback_wrapper(**callback[1])
-            cond_method = self.create_async_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+            call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
+            cond_method = self.create_async_condition_wrapper(**callback_async[2])
+            c_manager.callbacks[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -946,9 +1078,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
                 **callback[3],
             )
         if callback_async is not None:
-            call_method = self.create_async_routing_callback_wrapper(**callback[1])
-            cond_method = self.create_async_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
+            call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
+            cond_method = self.create_async_condition_wrapper(**callback_async[2])
+            c_manager.callbacks[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -1005,7 +1137,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             ))
 
     # Get
-    def get_item(self, name: str, **kwargs: Any) -> Any:
+    def get_item(self, name: str | int, **kwargs: Any) -> Any:
         """Gets an item from the requested IO object.
 
         Args:
@@ -1015,9 +1147,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The requested item.
         """
-        return self.data[name].get(**kwargs)
+        return self.io_objects[name].get(**kwargs)
 
-    async def get_item_async(self, name: str, **kwargs: Any) -> Any:
+    async def get_item_async(self, name: str | int, **kwargs: Any) -> Any:
         """Asynchronously gets an item from the requested IO object.
 
         Args:
@@ -1027,14 +1159,14 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The requested item.
         """
-        task = create_task(self.data[name].get_async(**kwargs))
+        task = create_task(self.io_objects[name].get_async(**kwargs))
         self.get_tasks.add(task)
         task.add_done_callback(self.get_tasks.discard)
         return await task
 
     def get_items(
         self,
-        names: Iterable[str],
+        names: Iterable[str | int],
         defaults: dict[str, Any] | None = None,
         *args: Any,
         **kwargs: Any,
@@ -1044,8 +1176,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             defaults = {}
 
         # Build items from iterators
-        r_iter = ((n, self.data[n].get(*args, **kwargs)) for n in names)
-        o_iter = ((k, self.data[k].get(*args, block=False, default=v, **kwargs)) for k, v in defaults.items())
+        r_iter = ((n, self.io_objects[n].get(*args, **kwargs)) for n in names)
+        o_iter = ((k, self.io_objects[k].get(*args, block=False, default=v, **kwargs)) for k, v in defaults.items())
         return dict(chain(r_iter, o_iter))
 
     async def get_items_async(
@@ -1060,9 +1192,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             defaults = {}
 
         # Build items from iterators
-        r_iter = ((n, create_task(self.data[n].get_async(*args, **kwargs))) for n in names)
+        r_iter = ((n, create_task(self.io_objects[n].get_async(*args, **kwargs))) for n in names)
         o_iter = (
-            (k, create_task(self.data[k].get_async(*args, block=False, default=v, **kwargs)))
+            (k, create_task(self.io_objects[k].get_async(*args, block=False, default=v, **kwargs)))
             for k, v in defaults.items()
         )
         tasks = dict(chain(r_iter, o_iter))
@@ -1075,22 +1207,22 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         # Build items with an async gather
         return dict(zip(tasks.keys(), await gather(*tasks.values())))
 
-    def get_ordered(self, *args, **kwargs) -> tuple[Any, ...]:
+    def get_ordered(self, *args, **kwargs) -> list[Any, ...]:
         """Gets an item from all the IO objects.
 
         Returns:
             The first item in all the IO objects.
         """
-        return tuple(v.get(*args, **kwargs) for v in self.data.values())
+        return list(v.get(*args, **kwargs) for v in self.io_objects.values())
 
-    async def get_ordered_async(self, *args, **kwargs) -> tuple[Any, ...]:
+    async def get_ordered_async(self, *args, **kwargs) -> list[Any, ...]:
         """Asynchronously gets an item from all the IO objects.
 
         Returns:
             The first item in all the IO objects.
         """
         tasks = set
-        for v in self.data.values():
+        for v in self.io_objects.values():
             t = create_task(v.get_async(*args, **kwargs))
             tasks.add(t)
             t.add_done_callback(self.get_tasks.discard)
@@ -1103,7 +1235,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        return {k: v.get(*args, **kwargs) for k, v in self.data.items()}
+        return {k: v.get(*args, **kwargs) for k, v in self.iter_visible_io_items()}
 
     async def get_all_async(self, *args, **kwargs) -> dict[str, Any]:
         """Asynchronously gets an item from all the IO objects.
@@ -1112,18 +1244,19 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             The first item in all the IO objects.
         """
         tasks = deque()
-        for v in self.data.values():
+        keys = deque()
+        for k, v in self.iter_visible_io_items():
+            keys.append(k)
             t = create_task(v.get_async(*args, **kwargs))
             tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
-        d = dict(zip(self.data.keys(), await gather(*tasks)))
+        d = dict(zip(keys, await gather(*tasks)))
         return d
 
-    def get_required(
+    def get_groups(
         self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
+        groups: Iterable[str] | str = "__default__",
         defaults: dict[str, Any] | None = None,
         *args,
         **kwargs,
@@ -1133,23 +1266,20 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-
-        if defaults is None:
-            defaults = self.optional_defaults
+        defaults = self.default_values | (defaults or {})
 
         items = {}
-        for k, v in self.data.items():
-            if k in required:
+        for k, v in self.iter_groups_io_items(groups=groups):
+            if (default := defaults.get(k, None)) is None:
                 items[k] = v.get(*args, **kwargs)
             else:
-                items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
+                items[k] = v.get(*args, block=False, default=default, **kwargs)
+
         return items
 
-    async def get_required_async(
+    async def get_groups_async(
         self,
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
+        groups: Iterable[str] | str = "__default__",
         defaults: dict[str, Any] | None = None,
         *args,
         **kwargs,
@@ -1159,116 +1289,34 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
         Returns:
             The first item in all the IO objects.
         """
-        required = set((self.order if self.required is None else self.required) if required is None else required)
-
-        if defaults is None:
-            defaults = self.optional_defaults
+        defaults = self.default_values | (defaults or {})
 
         tasks = deque()
-        for k, v in self.data.items():
-            if k in required:
+        keys = deque()
+        for k, v in self.iter_groups_io_items(groups=groups):
+            keys.append(k)
+            if (default := defaults.get(k, None)) is None:
                 t = create_task(v.get_async(*args, **kwargs))
             else:
-                t = create_task(v.get_async(
-                    *args,
-                    block=False,
-                    default=defaults[k] if k in defaults else default,
-                    **kwargs
-                ))
+                t = create_task(v.get_async(*args, block=False, default=default, **kwargs))
             tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
-        return dict(zip(self.data.keys(), await gather(*tasks)))
+        return dict(zip(keys, await gather(*tasks)))
 
-    def get_link_id(
-        self,
-        key: tuple[int, str, int, str],
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        """Put an item into an IO object.
+    def get_link_id(self, key: tuple[int, str, int, str], *args: Any, **kwargs: Any) -> None:
+        _, _, id_, name = key
+        if id_ == self.id_number:
+            return self.io_objects[name].get(*args, **kwargs)
+        else:
+            raise KeyError(f"ID missmatch for {key}: {id_} != {self.id_number}")
 
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        _, origin, _, name = key
-        io_ = self.links_from[key]
-        value = io_.get() if origin is None else io_.get_item(origin)
-        self.data[name].put(value, *args, **kwargs)
-        required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            if defaults is None:
-                defaults = self.optional_defaults
-
-            items = {}
-            for k, v in self.data.items():
-                if k in required:
-                    items[k] = v.get(*args, **kwargs)
-                else:
-                    items[k] = v.get(*args, block=False, default=defaults[k] if k in defaults else default, **kwargs)
-            # Callback
-            self.callback(items)
-
-            # Endpoint
-            for k, (o, n, in_, d) in self.endpoints.items():
-                in_.get_link_id(k)
-
-    async def get_link_id_async(
-        self,
-        key: tuple[int, str, int, str],
-        required: Iterable[str] | None = None,
-        default: Any = search_sentinel,
-        defaults: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> None:
-        """Put an item into an IO object.
-
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        _, origin, _, name = key
-        io_ = self.links_from[key]
-        # Get as a task
-        task = create_task(io_.get_async() if origin is None else io_.get_item_async(origin))
-        self.get_tasks.add(task)
-        task.add_done_callback(self.get_tasks.discard)
-        # Put into self
-        await self.data[name].put_async(await task, *args, **kwargs)
-        required = set((self.required or self.order) if required is None else required)
-
-        if all(v.poll() for k, v in self.data.items() if k in required):
-            items = deque()
-            for k, v in self.data.items():
-                if k in required:
-                    items.append(v.get_async(*args, **kwargs))
-                else:
-                    items.append(v.get_async(
-                        *args,
-                        block=False,
-                        default=defaults[k] if k in defaults else default,
-                        **kwargs
-                    ))
-            # Create Execute Task
-            task = create_task(self.callback_async(dict(zip(self.data.keys(), await gather(*items)))))
-            self.callback_tasks.add(task)
-            task.add_done_callback(self.callback_tasks.discard)  # Have task remove its reference after completion
-
-            # Create Endpoint Task
-            for k, (o, n, in_, d) in self.endpoints.items():
-                task = create_task(in_.get_link_id_async(k))
-                self.callback_tasks.add(task)
-                task.add_done_callback(self.callback_tasks.discard)
+    async def get_link_id_async(self, key: tuple[int, str, int, str], *args: Any, **kwargs: Any) -> None:
+        _, _, id_, name = key
+        if id_ == self.id_number:
+           return await self.io_objects[name].get_async(*args, **kwargs)
+        else:
+            raise KeyError(f"ID missmatch for {key}: {id_} != {self.id_number}")
 
     # Put
     def put_item(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
@@ -1280,7 +1328,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        self.data[name].put(value, *args, **kwargs)
+        self.io_objects[name].put(value, *args, **kwargs)
 
     async def put_item_async(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
         """Asynchronously put an item into an IO object.
@@ -1291,7 +1339,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO object.
             **kwargs: The keyword arguments of the put of the IO object.
         """
-        await self.data[name].put_async(value, *args, **kwargs)
+        await self.io_objects[name].put_async(value, *args, **kwargs)
 
     def put_ordered(self, values: Iterable[Any], *args: Any, **kwargs: Any) -> None:
         """Puts given values into their IO objects based on this object's order.
@@ -1301,8 +1349,8 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO objects.
             **kwargs: The keyword arguments of the put of the IO objects.
         """
-        for k, v in zip(self.order, values):
-            self.data[k].put(v, *args, **kwargs)
+        for k, v in zip(self.iter_visible_io_keys(), values):
+            self.io_objects[k].put(v, *args, **kwargs)
 
     async def put_ordered_async(self, values: Iterable[Any], *args: Any, **kwargs: Any) -> None:
         """Asynchronously puts given values into their IO objects based on this object's order.
@@ -1312,9 +1360,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments of the put of the IO objects.
             **kwargs: The keyword arguments of the put of the IO objects.
         """
-        await gather(*(self.data[k].put_async(v, *args, **kwargs) for k, v in zip(self.order, values)))
+        items = zip(self.iter_visible_io_keys(), values)
+        await gather(*(self.io_objects[k].put_async(v, *args, **kwargs) for k, v in items))
 
-    def put_callback(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
+    def put_item_callback(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
         """Puts an item into an IO object and schedule a callback.
 
         Args:
@@ -1324,18 +1373,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The keyword arguments of the put of the IO object.
         """
         # Put data into IO
-        self.data[name].put(value, *args, **kwargs)
+        self.io_objects[name].put(value, *args, **kwargs)
 
         # Schedule Callback
-        self.schedule_callback()
+        self.callback_manager.start_scheduler()
 
-    async def put_callback_async(
-        self,
-        name: str,
-        value: Any,
-        *args,
-        **kwargs,
-    ) -> None:
+    async def put_item_callback_async(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
         """Put an item into an IO object.
 
         Args:
@@ -1345,10 +1388,10 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The keyword arguments of the put of the IO object.
         """
         # Put data into IO
-        await self.data[name].put_async(value, *args, **kwargs)
+        await self.io_objects[name].put_async(value, *args, **kwargs)
 
         # Schedule Callback
-        await self.schedule_callbacks_async()
+        self.callback_manager.start_scheduler()
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
@@ -1358,7 +1401,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             **kwargs: The IO values to put into IO objects.
         """
         for k, v in (kwargs if __m is None else (__m | kwargs)).items():
-            self.data[k].put(v)
+            self.io_objects[k].put(v)
 
     async def put_all_async(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Asynchronously puts all given keyword IO values into their IO objects.
@@ -1367,7 +1410,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             __m: A mapping with the IO values to put into IO objects.
             **kwargs: The IO values to put into IO objects.
         """
-        await gather(*(self.data[k].put_async(v) for k, v in (kwargs if __m is None else (__m | kwargs)).items()))
+        await gather(*(self.io_objects[k].put_async(v) for k, v in (kwargs if __m is None else (__m | kwargs)).items()))
 
     def put_to_all(self, value: Any, *args, **kwargs: Any) -> None:
         """Puts a value to all IO objects.
@@ -1377,7 +1420,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        for io_object in self.data.values():
+        for io_object in self.iter_visible_io_values():
             io_object.put(value, *args, **kwargs)
 
     async def put_to_all_async(self, value: Any, *args, **kwargs: Any) -> None:
@@ -1388,7 +1431,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        await gather(*(io_object.put_async(value, *args, **kwargs) for io_object in self.data.values()))
+        await gather(*(io_object.put_async(value, *args, **kwargs) for io_object in self.iter_visible_io_values()))
 
     def put_break_sentinel(self, *args, **kwargs: Any) -> None:
         """Puts the break sentinel to all IO objects.
@@ -1398,7 +1441,7 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        for io_object in self.data.values():
+        for io_object in self.io_objects.values():
             io_object.put(self.break_sentinel, *args, **kwargs)
 
     async def put_break_sentinel_async(self, *args, **kwargs: Any) -> None:
@@ -1409,42 +1452,42 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
             *args: The arguments for the inner io objects' put.
             **kwargs: The keyword arguments for the inner io objects' put.
         """
-        await gather(*(io_object.put_async(self.break_sentinel, *args, **kwargs) for io_object in self.data.values()))
+        await gather(
+            *(io_object.put_async(self.break_sentinel, *args, **kwargs) for io_object in self.io_objects.values())
+        )
 
     # Join
     def join_all(self, *args: Any, **kwargs: Any) -> None:
-        for io_object in self.data.values():
+        for io_object in self.io_objects.values():
             io_object.join(*args, **kwargs)
 
     async def join_all_async(self, *args: Any, **kwargs: Any) -> None:
-        await gather(*(create_task(v.join_async(*args, **kwargs)) for v in self.data.values()))
+        await gather(*(create_task(v.join_async(*args, **kwargs)) for v in self.io_objects.values()))
 
-    def join_required(self, required: Iterable[str] | None = None, *args: Any, **kwargs: Any) -> None:
+    def join_groups(self, groups: Iterable[str] | str = "__default__", *args: Any, **kwargs: Any) -> None:
         """Joins the required IO objects.
 
         Args:
-            required: The names of the required IO objects to join.
+            groups: The names of the required groups IO objects to join.
             *args: Positional arguments passed to the `join` method of individual containers.
             **kwargs: Keyword arguments passed to the `join` method of individual containers.
         """
-        required_names = set((self.order if self.required is None else self.required) if required is None else required)
-        required_io = tuple(self.data[n] for n in required_names)
-        while any(r_io.poll() for r_io in required_io):
-            for r_io in required_io:
+        ios = tuple(self.iter_groups_io_values(groups=groups))
+        while any(r_io.poll() for r_io in ios):
+            for r_io in ios:
                 r_io.join(*args, **kwargs)
 
-    async def join_required_async(self, required: Iterable[str] | None = None, *args: Any, **kwargs: Any) -> None:
+    async def join_groups_async(self, groups: Iterable[str] | str = "__default__", *args: Any, **kwargs: Any) -> None:
         """Asynchronously, joins the required IO objects.
 
         Args:
-            required: The names of the required IO objects to join.
+            groups: The names of the required groups IO objects to join.
             *args: Positional arguments passed to the `join` method of individual containers.
             **kwargs: Keyword arguments passed to the `join` method of individual containers.
         """
-        required_names = set((self.order if self.required is None else self.required) if required is None else required)
-        required_io = tuple(self.data[n] for n in required_names)
-        while any(await gather(*(r_io.poll_async() for r_io in required_io))):
-            await gather(*(create_task(r_io.join_async(*args, **kwargs)) for r_io in required_io))
+        ios = tuple(self.iter_groups_io_values(groups=groups))
+        while any(await gather(*(r_io.poll_async() for r_io in ios))):
+            await gather(*(create_task(r_io.join_async(*args, **kwargs)) for r_io in ios))
 
     # Tasks
     def cancel_tasks(self) -> None:
@@ -1454,12 +1497,12 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
     def stop(self) -> None:
         self.cancel_tasks()
         self.stop_listeners()
-        self.cancel_callbacks()
+        self.callback_manager.cancel_tasks()
 
     async def stop_async(self) -> None:
         self.cancel_tasks()
         self.stop_listeners()
-        self.cancel_callbacks()
+        self.callback_manager.cancel_tasks()
 
     # Listening
     async def listen_link_async(self, key: tuple[int, str, int, str], *args, **kwargs) -> None:
@@ -1482,9 +1525,9 @@ class IORouter(BaseIOMultiplexer, OrderableDict):
 
         while self._is_listening:
             # Retrieve data from the linked IO and put it into the current IO's data queue.
-            await self.data[name].put_async(await get_method())
-            # Schedule callbacks if necessary.
-            await self.schedule_callback_async()
+            await self.io_objects[name].put_async(await get_method())
+            # Start callback scheduler
+            self.callback_manager.start_scheduler()
 
     def _remove_listener(self, task: Task, key: tuple[int, str, int, str]) -> None:
         del self.listeners[key]

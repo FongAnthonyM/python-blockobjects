@@ -21,7 +21,7 @@ async def main():
     print("BlockGroup Example:")
 
     # Create Block Group
-    group = ExampleBlockGroup(will_proxy=True)
+    group = ExampleBlockGroup(will_proxy=False)
     # Start Block Group
     print("Starting Block Group")
     await group.start_async()

@@ -52,7 +52,7 @@ class ContextualIOManager(BaseIOManager):
         "default": DEFAULT_PROCESS_CONTEXT,
         "local": ManagerContext({"async": AsyncContext()}, "async"),
     }
-    default_io: type[BaseIO] = IOQueue
+    default_io_type: type[BaseIO] = IOQueue
 
     # Magic Methods #
     # Construction/Destruction
@@ -81,25 +81,49 @@ class ContextualIOManager(BaseIOManager):
         Args:
             context: The context to set the objects to.
         """
-        for io_ in self.data.values():
+        for io_ in self.io_objects.values():
             if (set_context := getattr(io_, 'set_context', None)) is not None:
                 set_context(context)
 
     # IO Objects
     def create_io(
         self,
-        name: str | Iterable[str],
+        name: str | int,
+        group: str = "__default__",
         type_: type[BaseIO] | None = None,
         *args: Any,
         **kwargs: Any,
-    ) -> None:
-        """Creates a new named IO object or new IO objects from a list of names.
+    ) -> BaseIO:
+        """Creates a new named IO object.
 
         Args:
             name: The key name of the IO to create.
+            group: The group which the new IO will be under.
             type_: The type of IO to create.
-            *args: The arguments for constructing the new IO object.
-            **kwargs: The keyword arguments for constructing the new IO object.
+            *args: Positional arguments for constructing the new IO object.
+            **kwargs: Keyword arguments for constructing the new IO object.
         """
         kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
-        super().create_io(name, type_, *args, **kwargs)
+        return super().create_io(name, group, type_, *args, **kwargs)
+
+    def create_ios(
+        self,
+        names: Iterable[str | int] | None,
+        group: str = "__default__",
+        groups: dict[str, Iterable[str | int]] | None = None,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, dict[str | int, BaseIO]]:
+        """Creates a new named IO object or new IO objects from a list of names.
+
+        Args:
+            names: The key names of the IOs to create.
+            group: The group name which the new IOs will be under.
+            groups: Groups which create new IOs under with their names.
+            type_: The type of IO to create.
+            *args: Positional arguments for constructing the new IO object.
+            **kwargs: Keyword arguments for constructing the new IO object.
+        """
+        kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
+        return super().create_ios(names, group, groups, type_, *args, **kwargs)

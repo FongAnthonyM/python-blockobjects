@@ -490,6 +490,7 @@ class BlockGroup(BaseBlock):
         if self.is_alive():
             await self.correct_input_links_async()
         await self.set_input_callback_async()
+        await self.set_signal_callbacks_async()
         await self.inputs.start_listeners_async()
         await self.outputs.start_listeners_async()
 

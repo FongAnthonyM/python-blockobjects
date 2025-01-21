@@ -212,8 +212,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self._executing_waiters = deque()
         self.signal_callback_map = self.signal_callback_map.copy()
 
-        self.inputs = ArbitratingIOManager()
-        self.outputs = ArbitratingIOManager()
+        self.inputs = ArbitratingIOManager(visible_groups={"required", "optional"})
+        self.outputs = ArbitratingIOManager(visible_groups={"required"})
 
         self.setup_kwargs = self.setup_kwargs.copy()
         self.evaluate_kwargs = self.evaluate_kwargs.copy()
@@ -366,6 +366,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         input_signal_names: str | Iterable[str] | None = None,
         output_signal_names: str | Iterable[str] | None = None,
         *args: Any,
+        optional_input_names: str | Iterable[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Creates the IO for this object.
@@ -386,20 +387,27 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             input_signal_names = self.default_input_signal_names
         if output_signal_names is None:
             output_signal_names = self.default_output_signal_names
+        if optional_input_names is None:
+            optional_input_names = self.default_optional_input.keys()
 
-        # Create IO
-        self.inputs.create_io(name=input_names, *args, **kwargs)
-        self.outputs.create_io(name=output_names, *args, **kwargs)
+        # Create Inputs
+        optional_input = set(optional_input_names)
+        required_input = set(input_names) - optional_input
+        input_groups = {"required": required_input, "optional": optional_input}
+        self.inputs.create_ios(input_groups, *args, **kwargs)
+        self.inputs.default_values.update(self.default_optional_input)
 
-        self.inputs.required = self.default_required_input
-        self.inputs.optional_defaults.update(self.default_optional_input)
+        # Create Input Signals
+        input_signals = self.inputs.create_io(name=self.signal_io_name, group="signals", type_=self.signals_type)
+        input_signals.create_ios(names=input_signal_names, group="signals")
 
-        # Create Signal IO
-        self.inputs.create_io(name=self.signal_io_name, type_=self.signals_type)
-        self.inputs[self.signal_io_name].create_io(name=input_signal_names)
+        # Create Outputs
+        output_groups = {"required": output_names}
+        self.outputs.create_ios(output_groups, *args, **kwargs)
 
-        self.outputs.create_io(name=self.signal_io_name, type_=self.signals_type)
-        self.outputs[self.signal_io_name].create_io(name=output_signal_names)
+        # Create Output Signals
+        output_signals = self.outputs.create_io(name=self.signal_io_name, group="signals", type_=self.signals_type)
+        output_signals.create_ios(names=output_signal_names, group="signals")
 
         # Setup IO Connections
         self.setup_io()
@@ -569,7 +577,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self,
         method: str,
         method_async: str | None = None,
-        get_method: str = "get_required",
+        get_method: str = "get_groups",
         get_method_async: str | None = None,
         get_kwargs: dict[str, Any] | None = None,
         callback_kwargs: dict[str, Any] | None = None,
@@ -606,7 +614,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Create formatted tuples to pass to callback registration
         callback_info = (
             {"callback": method, "get_method": get_method, "get_kwargs": get_kwargs} | callback_kwargs,
-            {"method": "poll_required"} | condition_kwargs,
+            {"method": "poll_groups"} | condition_kwargs,
             {"evaluator": "evaluate_callbacks"},
         )
         callback_async_info = (
@@ -616,7 +624,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 "get_kwargs": get_kwargs,
                 "as_task": True,
             } | callback_kwargs,
-            {"method": "poll_required_async"} | condition_kwargs,
+            {"method": "poll_grousp_async"} | condition_kwargs,
             {"evaluator": "evaluate_task_callbacks_async"} | manager_kwargs,
         )
 
@@ -639,11 +647,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         callback_info, callback_async_info = self._create_callback_info(
             method=name,
             method_async=name_async,
-            get_method="get_required",
-            get_method_async="get_required_async",
-            get_kwargs={"required": self.inputs.required},
+            get_method="get_groups",
+            get_method_async="get_groups_async",
+            get_kwargs={"groups": ("required", "optional")},
             callback_kwargs={"as_first": True},
-            condition_kwargs={"required": self.inputs.required},
+            condition_kwargs={"groups": ("required",)},
             as_proxy=as_proxy,
         )
 
@@ -666,11 +674,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         callback_info, callback_async_info = self._create_callback_info(
             method=name,
             method_async=name_async,
-            get_method="get_required",
-            get_method_async="get_required_async",
-            get_kwargs={"required": self.inputs.required},
+            get_method="get_groups",
+            get_method_async="get_groups_async",
+            get_kwargs={"groups": ("required", "optional")},
             callback_kwargs={"as_first": True},
-            condition_kwargs={"required": self.inputs.required},
+            condition_kwargs={"groups": ("required",)},
             as_proxy=as_proxy,
         )
 
@@ -681,7 +689,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             "method": entry[0],
             "get_method": "get_items",
             "get_kwargs": {"names": entry[1]},
-            "condition_kwargs": {"required": entry[1]},
+            "condition_kwargs": {"method": "poll_all_ios", "names": entry[1]},
             "as_proxy": True,
         } | entry[2]
 
@@ -705,18 +713,19 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     def finalize_io(self) -> None:
         self.set_input_callback()
+        self.set_signal_callbacks()
         self.inputs.start_listeners()
         self.outputs.start_listeners()
 
     async def finalize_io_async(self) -> None:
         await self.set_input_callback_async()
+        await self.set_signal_callbacks_async()
         await self.inputs.start_listeners_async()
         await self.outputs.start_listeners_async()
 
     # Setup
     def setup(self, *args: Any, **kwargs: Any) -> None:
         """A method for setting up the object."""
-        pass
 
     async def setup_async(self, *args: Any, **kwargs: Any) -> None:
         """Asynchronously runs the setup."""
@@ -879,7 +888,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         while self._loop_event:
             # Get Inputs
             inputs, ids = self.format_input(self.get_input())
-            if any((inputs[n]) for n in self.inputs.required):
+            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
                 self._loop_event = False
                 continue
 
@@ -896,7 +905,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         while self._loop_event:
             # Get Inputs
             inputs, ids = self.format_input(await create_task(self.get_input_async()))
-            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.required):
+            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
                 self._loop_event = False
                 continue
 
@@ -955,7 +964,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     # Teardown
     def teardown(self, *args: Any, **kwargs: Any) -> None:
         """A method for tearing down the object."""
-        pass
 
     async def teardown_async(self, *args: Any, **kwargs: Any) -> None:
         """Asynchronously runs the teardown."""

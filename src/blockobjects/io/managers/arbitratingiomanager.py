@@ -50,7 +50,7 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
     unexposed: ClassVar[set] = {
         "is_endpoint_link",
         "is_listen_link",
-        "default_io",
+        "default_io_type",
     }
     local_methods: ClassVar[set] = {
         "create_io_wrapper",
@@ -60,8 +60,8 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
         "update_server_io_async",
     }
 
-    default_get: ClassVar[str] = "get_required"
-    default_get_async: ClassVar[str] = "get_required_async"
+    default_get: ClassVar[str] = "get_groups"
+    default_get_async: ClassVar[str] = "get_groups_async"
     default_put: ClassVar[str] = "put_ordered"
     default_put_async: ClassVar[str] = "put_ordered_async"
     default_create_link: ClassVar[str] = "create_io_wrapper"
