@@ -38,10 +38,10 @@ class ExampleBlockGroup(BlockGroup):
             **kwargs: The keyword arguments for creating the inner blockgroup.
         """
         # Create Blocks
-        self.blocks["generator"] = RNGBlock(shape=shape)
-        self.blocks["sum_1"] = SumBlock()
-        self.blocks["sum_2"] = SumBlock()
-        self.blocks["checker"] = IsEqualBlock(equals_method="unique")
+        self.blocks["generator"] = RNGBlock(shape=shape, evaluation_limit=2, name="generator")
+        self.blocks["sum_1"] = SumBlock(name="sum_1")
+        self.blocks["sum_2"] = SumBlock(name="sum_2")
+        self.blocks["checker"] = IsEqualBlock(equals_method="unique", name="checker")
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
@@ -76,14 +76,14 @@ class ExampleBlockGroup(BlockGroup):
         checker.outputs.link_forward("result", self.outputs, "group_result")  # Can link the IO of single IO items.
 
         # Signals
-        generator_signal_router = IORouter(names=("sum_1", "sum_2"))
+        generator_signal_router = IORouter(io_=("sum_1", "sum_2"))
         generator.outputs.encapsulate_io(generator_signal_router)
         generator.output_signals.link_forward("done_flag", generator_signal_router)
         generator_signal_router.link_forward("sum_1", sum_1.input_signals, "stop_flag")
         generator_signal_router.link_forward("sum_2", sum_2.input_signals, "stop_flag")
 
         # Create an ADD signal gate for sum done stop flag
-        sum_signal_router = IORouter(names=("sum_1", "sum_2", "stop_flag"))
+        sum_signal_router = IORouter(io_={"inputs": ("sum_1", "sum_2"), "outputs": ("stop_flag",)})
 
         def bool_and(**kw: Any) -> dict[str, Any]:
             return {"stop_flag": all(kw.values())}
@@ -93,14 +93,26 @@ class ExampleBlockGroup(BlockGroup):
 
         callback_info = (
             "and_callback",
-            {"callback": bool_and, "get_method": "get_items", "get_kwargs": {"names": ("sum_1", "sum_2")}},
-            {"method": "poll_required", "kwargs": {"required": ("sum_1", "sum_2")}},
+            {
+                "callback": bool_and,
+                "get_method": "get_items",
+                "put_method": "put_items_callback",
+                "get_kwargs": {"names": ("sum_1", "sum_2")},
+                "as_task": True,
+            },
+            {"method": "poll_groups", "groups": ("inputs",)},
             {"evaluator": "evaluate_callbacks"},
         )
         callback_async_info = (
             "and_callback",
-            {"callback": bool_and_async, "get_method": "get_items_async", "get_kwargs": {"names": ("sum_1", "sum_2")}},
-            {"method": "poll_required_async", "kwargs": {"required": ("sum_1", "sum_2")}},
+            {
+                "callback": bool_and_async,
+                "get_method": "get_items_async",
+                "put_method": "put_items_callback_async",
+                "get_kwargs": {"names": ("sum_1", "sum_2")},
+                "as_task": True,
+            },
+            {"method": "poll_groups_async", "groups": ("inputs",)},
             {"evaluator": "evaluate_task_callbacks_async"},
         )
 

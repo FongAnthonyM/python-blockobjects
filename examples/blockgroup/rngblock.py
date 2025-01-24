@@ -57,6 +57,7 @@ class RNGBlock(BaseBlock):
         shape: tuple[int, ...] = (),
         scale: float = 1,
         shift: float = 0.0,
+        evaluation_limit: int = 1,
         *args: Any,
         init: bool = True,
         **kwargs: Any,
@@ -65,6 +66,7 @@ class RNGBlock(BaseBlock):
         self.shape: tuple[int, ...] = shape
         self.scale: float = scale
         self.shift: float = shift
+        self.evaluation_limit = evaluation_limit
 
         # Parent Attributes #
         super().__init__(*args, init=False, **kwargs)
@@ -96,8 +98,10 @@ class RNGBlock(BaseBlock):
         """
         if self.n_evaluations >= self.evaluation_limit:
             self.stop_flag = True
-
-        return np.random.rand(*self.shape) * self.scale - self.shift
+            return self.no_output_sentinel
+        else:
+            self.n_evaluations += 1
+            return np.random.rand(*self.shape) * self.scale - self.shift
 
     # Teardown
     async def teardown(self) -> None:

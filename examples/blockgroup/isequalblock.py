@@ -128,4 +128,5 @@ class IsEqualBlock(BaseBlock):
         Returns:
             The boolean if all values are equal.
         """
+        print("IsEqualBlock.evaluate")
         return self.is_equal(data)

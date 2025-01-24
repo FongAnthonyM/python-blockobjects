@@ -30,7 +30,7 @@ def pytest_runtest_makereport(item, call):
             # retrieve the index of the test (if parametrize is used in combination with incremental)
             parametrize_index = tuple(item.callspec.indices.values()) if hasattr(item, "callspec") else ()
             # retrieve the name of the test function
-            test_name = item.originalname or item.name
+            test_name = item.originalname or item._name
             # store in _test_failed_incremental the original name of the failed test
             _test_failed_incremental.setdefault(cls_name, {}).setdefault(parametrize_index, test_name)
 

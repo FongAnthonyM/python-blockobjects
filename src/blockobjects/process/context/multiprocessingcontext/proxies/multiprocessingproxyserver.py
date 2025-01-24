@@ -156,7 +156,7 @@ class MultiprocessingProxyServer(SharedMemoryManager):
             ),
         )
         ident = ':'.join(str(i) for i in self._process._identity)
-        self._process.name = type(self).__name__ + '-' + ident
+        self._process._name = type(self).__name__ + '-' + ident
         self._process.start()
         writer.close()
 

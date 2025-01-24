@@ -13,15 +13,17 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from collections.abc import Iterable, Callable
+from collections.abc import Iterable, Callable, MutableMapping
 from typing import ClassVar, Any
 
 # Third-Party Packages #
+from baseobjects import SentinelObject, DEFAULTSENTINEL
 from ...process import BaseProcessingContext, AsyncContext, ManagerContext, DEFAULT_PROCESS_CONTEXT
 
 # Local Packages #
 from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
 from ..containers import IOQueue
+from ..routers import IOGroupType, IOGroupTypeMap
 from .baseiomanager import BaseIOManager
 
 
@@ -58,8 +60,9 @@ class ContextualIOManager(BaseIOManager):
     # Construction/Destruction
     def __init__(
         self,
-        io_: dict[str, BaseIO | None] | None = None,
-        names: Iterable[str] | None = None,
+        io_: IOGroupTypeMap | MutableMapping[str, Iterable[str | int]] | Iterable[str | int] | None = None,
+        visible_groups: Iterable[str] | None | SentinelObject = DEFAULTSENTINEL,
+        hidden_groups: Iterable[str] | None = None,
         *args: Any,
         init: bool = True,
         **kwargs: Any,
@@ -72,7 +75,7 @@ class ContextualIOManager(BaseIOManager):
 
         # Construction #
         if init:
-            self.construct(io_, names, *args, **kwargs)
+            self.construct(io_, visible_groups, hidden_groups, *args, **kwargs)
 
     # Context
     def set_all_contexts(self, context: BaseProcessingContext | None) -> None:
@@ -108,9 +111,9 @@ class ContextualIOManager(BaseIOManager):
 
     def create_ios(
         self,
-        names: Iterable[str | int] | None,
+        names: Iterable[str | int] | None = None,
         group: str = "__default__",
-        groups: dict[str, Iterable[str | int]] | None = None,
+        groups: MutableMapping[str, Iterable[str | int]] | None = None,
         type_: type[BaseIO] | None = None,
         *args: Any,
         **kwargs: Any,

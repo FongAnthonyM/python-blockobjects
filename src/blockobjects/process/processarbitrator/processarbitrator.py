@@ -61,6 +61,7 @@ class ProcessArbitrator(ContextualObjectInterface):
     """
 
     # Class Attributes #
+    _checked_parents_: set[object] = set()
     public_exposed: ClassVar[bool] = True
     _exposed_: ClassVar[set[str]] = set()
     exposed: ClassVar[set[str]] = set()
@@ -97,25 +98,33 @@ class ProcessArbitrator(ContextualObjectInterface):
         Args:
             **kwargs: The keyword arguments for creating a subclass.
         """
-        super.__init_subclass__()
+        super().__init_subclass__()
 
-        ignore = set()
-        for name in cls._get_exposed():
-            func = getattr(cls, name, None)
-            if func is None:
-                raise AttributeError(f"'{cls.__name__}' object has no method '{name}'")
-            if (
-                not isinstance(func, arbitratemethod) and
-                not isinstance(getattr(func, "__wrapped__", func), arbitratemethod)
-            ):
-                if name in (cls._local_methods_ | cls.local_methods):
-                    wrapper_method = "local_call"
-                else:
-                    wrapper_method = arbitratemethod._wrapper_method
-                d_method = arbitratemethod(func, wrapper_method=wrapper_method)
-                setattr(cls, name, d_method)
-                ignore.add(name)
-        cls._exposed_done = ignore
+        wrapped_methods = set()
+        for parent in (p for p in cls.__mro__ if p not in cls._checked_parents_):
+            method_names = set(name for name in parent.__dict__ if callable(getattr(parent, name, None)))
+            method_names -= cls._unexposed_ | cls.unexposed | wrapped_methods
+            public_methods = set(n for n in method_names if n[0] != "_") if cls.public_exposed else set()
+            check_methods = public_methods | (method_names & (cls.exposed | cls._exposed_))
+
+            for method_name in check_methods:
+                func = parent.__dict__.get(method_name, None)
+                if func is None:
+                    raise AttributeError(f"'{cls.__name__}' object has no method '{method_name}'")
+                if (
+                    not isinstance(func, staticmethod) and
+                    not isinstance(func, arbitratemethod) and
+                    not isinstance(getattr(func, "__wrapped__", func), arbitratemethod)
+                ):
+                    if method_name in (cls._local_methods_ | cls.local_methods):
+                        wrapper_method = "local_call"
+                    else:
+                        wrapper_method = arbitratemethod._wrapper_method
+                    d_method = arbitratemethod(func, wrapper_method=wrapper_method)
+                    setattr(cls, method_name, d_method)
+                    wrapped_methods.add(method_name)
+
+        cls._checked_parents_.update(cls.__mro__)
 
     # Attributes #
     _proxy_context: BaseProcessingContext

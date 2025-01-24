@@ -1,7 +1,10 @@
 """ iorouter.py
 An IO object which maps inputs to outputs.
 """
-from sqlalchemy.ext.mutable import MutableDict
+from curses import wrapper
+
+from sqlalchemy.util import await_fallback
+from sympy.strategies.branch import condition
 
 # Package Header #
 from ...header import *
@@ -18,7 +21,7 @@ __email__ = __email__
 from asyncio import gather, create_task, Task, CancelledError
 from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
 from collections.abc import Iterable, Iterator, Callable, MutableMapping, Generator
-from collections import deque, ChainMap
+from collections import deque
 from functools import partial
 from itertools import chain
 from typing import ClassVar, Any
@@ -28,7 +31,7 @@ from weakref import WeakKeyDictionary, WeakSet, ReferenceType
 
 # Third-Party Packages #
 from baseobjects import SentinelObject, DEFAULTSENTINEL
-from baseobjects.collections import OrderableDict
+from baseobjects.collections import OrderableDict, DeepChainMap
 from baseobjects.functions import MethodMultiplexer
 from baseobjects.objects import CallbackManager
 
@@ -38,9 +41,14 @@ from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
 
 
 # Definitions #
-# Typing
-IOGroupType = MutableMapping[str | int, BaseIO ]
-IOGroupTypeMap = MutableMapping[str, IOGroupType]
+# Typing #
+type IOGroupType = MutableMapping[str | int, BaseIO ]
+type IOGroupTypeMap = MutableMapping[str, IOGroupType]
+
+# Functions #
+async def _put_loading_async(put_method: Callable, callback: Task) -> None:
+    await put_method(await callback)
+
 
 # Classes #
 class IORouter(BaseIOMultiplexer):
@@ -86,14 +94,129 @@ class IORouter(BaseIOMultiplexer):
         **kwargs: Additional keyword arguments passed to parent class constructors.
     """
 
+    # Static Methods #
+    @staticmethod
+    def condition_wrapper(condition: Callable, *args: Any, **kwargs: Any) -> bool:
+        return condition(*args, **kwargs)
+
+    @staticmethod
+    async def conditional_wrapper_async(condition: Callable, *args: Any, **kwargs: Any) -> bool:
+        return await condition(*args, **kwargs)
+
+    @staticmethod
+    def callback_wrapper_kwargs(*args: Any, callback: Callable, get_method: Callable, **kwargs: Any) -> None:
+        callback(*args, **get_method() | kwargs)
+
+    @staticmethod
+    def callback_wrapper_first(*args: Any, callback: Callable, get_method: Callable, **kwargs: Any) -> None:
+        callback(get_method(), *args, **kwargs)
+
+    @staticmethod
+    async def callback_wrapper_kwargs_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        await callback(*args, **(await get_method() | kwargs))
+
+    @staticmethod
+    async def callback_wrapper_first_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        await callback(await get_method(), *args, **kwargs)
+
+    @staticmethod
+    async def callback_task_kwargs_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        **kwargs: Any,
+    ) -> Task:
+        return create_task(callback(*args, **(await get_method() | kwargs)))
+
+    @staticmethod
+    async def callback_task_first_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        **kwargs: Any,
+    ) -> Task:
+        return create_task(callback(await get_method(), *args, **kwargs))
+
+    @staticmethod
+    def callback_routing_wrapper_kwargs(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        put_method(callback(*args, **get_method() | kwargs))
+
+    @staticmethod
+    def callback_routing_wrapper_first(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        put_method(callback(get_method(), *args, **kwargs))
+
+    @staticmethod
+    async def callback_routing_wrapper_kwargs_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        await put_method(await callback(*args, **(await get_method() | kwargs)))
+
+    @staticmethod
+    async def callback_routing_wrapper_first_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> None:
+        await put_method(await callback(await get_method(), *args, **kwargs))
+
+    @staticmethod
+    async def callback_routing_task_kwargs_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> Task:
+        callback_task = create_task(callback(*args, **(await get_method() | kwargs)))
+        return create_task(_put_loading_async(put_method, callback_task))
+
+    @staticmethod
+    async def callback_routing_task_first_async(
+        *args: Any,
+        callback: Callable,
+        get_method: Callable,
+        put_method: Callable,
+        **kwargs: Any,
+    ) -> Task:
+        callback_task =  create_task(callback(await get_method(), *args, **kwargs))
+        return create_task(_put_loading_async(put_method, callback_task))
+
     # Class Attributes #
     default_get: ClassVar[str] = "get_all"
     default_get_async: ClassVar[str] = "get_all_async"
     default_put: ClassVar[str] = "put_to_all"
     default_put_async: ClassVar[str] = "put_to_all_async"
-    default_join: ClassVar[str] = "join_groups"
-    default_join_async: ClassVar[str] = "join_groups_async"
-    default_create_link: ClassVar[str] = "create_link_pass_io"
+    default_join: ClassVar[str] = "join_all"
+    default_join_async: ClassVar[str] = "join_all_async"
+    default_create_link: ClassVar[str] = "create_link_wrapper"
 
     # Class Methods #
     @classmethod
@@ -105,6 +228,7 @@ class IORouter(BaseIOMultiplexer):
         return cls.is_endpoint_link(source, destination)
 
     # Attributes #
+    name: str = ""
     break_sentinel: SentinelObject = SentinelObject("io_break")
 
     # Links
@@ -126,14 +250,15 @@ class IORouter(BaseIOMultiplexer):
     default_io_type: type[BaseIO] = AsyncQueue
     default_values: dict[str, dict[str, Any]] = {}
 
-    io_objects: ChainMap[str | int, BaseIO]
+    io_objects: DeepChainMap[str | int, BaseIO]
     io_groups: IOGroupTypeMap
 
     # Get/Put Tasks
+    encapsulated_methods: dict[tuple, Callable]
     wrapped_getter: str | None = None
     wrapped_getter_async: str | None = None
-    wrapped_putter: str | None = "put_callback"
-    wrapped_putter_async: str | None = "put_callback_async"
+    wrapped_putter: str | None = "put_item_callback"
+    wrapped_putter_async: str | None = "put_item_callback_async"
     get_tasks: set[Task]
     put_tasks: set[Task]
 
@@ -171,13 +296,16 @@ class IORouter(BaseIOMultiplexer):
         visible_groups: Iterable[str] | None | SentinelObject = DEFAULTSENTINEL,
         hidden_groups: Iterable[str] | None = None,
         *args: Any,
+        name: str | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
         # Attributes #
+        self.id_number = uuid4().int
+        self.name = f"{self.__class__.__name__}_{self.id_number}" if name is None else name
+
         self.default_values = self.default_values.copy()
 
-        self.id_number = uuid4().int
         self.create_link = MethodMultiplexer(instance=self, select=self.default_create_link)
         self.directly_linked = WeakSet()
         self.links_to = {}
@@ -193,9 +321,10 @@ class IORouter(BaseIOMultiplexer):
 
         __default__ = OrderableDict()
         encapsulated = OrderableDict()
-        self.io_objects = ChainMap(__default__, encapsulated)
+        self.io_objects = DeepChainMap(__default__, encapsulated)
         self.io_groups = {"__default__": __default__, "encapsulated": encapsulated}
 
+        self.encapsulated_methods = {}
         self.get_tasks = set()
         self.put_tasks = set()
 
@@ -203,14 +332,11 @@ class IORouter(BaseIOMultiplexer):
         self.listeners = dict()
 
         # Parent Attributes #
-        super().__init__()
+        super().__init__(init=False)
 
         # Construction #
         if init:
-            self.construct(io_, visible_groups, *args, **kwargs)
-
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}>"
+            self.construct(io_, visible_groups, hidden_groups, *args, **kwargs)
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -261,6 +387,10 @@ class IORouter(BaseIOMultiplexer):
         else:
             self.io_objects[key] = item
 
+    # Representation
+    def __repr__(self) -> str:
+        return f"<{self.name}: {super().__repr__()}>"
+
     # Instance Methods #
     # Constructors/Destructors
     def construct(
@@ -269,6 +399,7 @@ class IORouter(BaseIOMultiplexer):
         visible_groups: Iterable[str] | None | SentinelObject = DEFAULTSENTINEL,
         hidden_groups: Iterable[str] | None = None,
         *args: Any,
+        name: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Constructs this object.
@@ -278,6 +409,9 @@ class IORouter(BaseIOMultiplexer):
             *args: Arguments for inheritance.
             **kwargs: Keyword arguments for inheritance.
         """
+        if name is not None:
+            self.name = name
+
         if isinstance(io_, MutableMapping):
             if isinstance(next(iter(io_.values())), MutableMapping):
                 self.require_io_groups(io_)
@@ -285,7 +419,7 @@ class IORouter(BaseIOMultiplexer):
                 self.create_ios(groups=io_)
         elif isinstance(io_, str):
             self.create_io(io_)
-        else:
+        elif isinstance(io_, Iterable):
             self.create_ios(names=io_)
 
         if visible_groups is not DEFAULTSENTINEL:
@@ -471,7 +605,7 @@ class IORouter(BaseIOMultiplexer):
         io_ = type_(*args, **kwargs)
 
         if (g := self.io_groups.get(group, None)) is None:
-            self.io_groups[group] = g = OrderableDict(name=io_)
+            self.io_groups[group] = g = OrderableDict(((name, io_),))
             self.io_objects.maps.append(g)
         else:
             g[name] = io_
@@ -506,7 +640,7 @@ class IORouter(BaseIOMultiplexer):
         for group_name, io_names in groups.items():
             new_groups[group_name] = ios = {n: type_(*args, **kwargs) for n in io_names}
             if (g := self.io_groups.get(group_name, None)) is None:
-                self.io_groups[group] = g = OrderableDict(ios)
+                self.io_groups[group_name] = g = OrderableDict(ios)
                 self.io_objects.maps.append(g)
             else:
                 g.update(ios)
@@ -589,38 +723,39 @@ class IORouter(BaseIOMultiplexer):
         self.io_groups["encapsulated"][io_.id_number] = io_
         io_.set_parent(self)
 
-    def encapsulated_put(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
-        self.io_groups["encapsulated"][id_].put(value, *arg, **kwargs)
+    def encapsulated_put(self, key, *arg: Any, **kwargs) -> None:
+        self.encapsulated_methods[key].put(*arg, **kwargs)
 
-    async def encapsulated_put_async(self, id_: int, value: Any, *arg: Any, **kwargs) -> None:
-        await self.io_groups["encapsulated"][id_].put_async(value, *arg, **kwargs)
+    async def encapsulated_put_async(self, key: int, *arg: Any, **kwargs) -> None:
+        await self.encapsulated_methods[key].put_async(*arg, **kwargs)
 
-    def encapsulated_get(self, id_: int, *args, **kwargs) -> Any:
-        return self.io_groups["encapsulated"][id_].get( *args, **kwargs)
+    def encapsulated_get(self, key, *args, **kwargs) -> Any:
+        return self.encapsulated_methods[key].get( *args, **kwargs)
 
-    async def encapsulated_get_async(self, id_: int, *args, **kwargs) -> Any:
-        return await self.io_groups["encapsulated"][id_].get_async(*args, **kwargs)
+    async def encapsulated_get_async(self, key, *args, **kwargs) -> Any:
+        return await self.encapsulated_methods[key].get_async(*args, **kwargs)
 
-    def encapsulated_join(self, id_: int, *args, **kwargs) -> None:
-        self.io_groups["encapsulated"][id_].join(*args, **kwargs)
+    def encapsulated_join(self, key, *args, **kwargs) -> None:
+        self.encapsulated_methods[key].join(*args, **kwargs)
 
-    async def encapsulated_join_async(self, id_: int, *args, **kwargs) -> None:
-        await self.io_groups["encapsulated"][id_].join_async(*args, **kwargs)
+    async def encapsulated_join_async(self, key, *args, **kwargs) -> None:
+        await self.encapsulated_methods[key].join_async(*args, **kwargs)
 
-    def create_encapsulated_wrapper(self, id_: int, *args, **kwargs) -> IOWrapper:
-        getter = partial(self.encapsulated_get, id_)
-        getter_async = partial(self.encapsulated_get_async, id_)
-        putter = partial(self.encapsulated_put, id_)
-        putter_async = partial(self.encapsulated_put_async, id_)
-        joiner = partial(self.encapsulated_join, id_)
-        joiner_async = partial(self.encapsulated_join_async, id_)
+    def create_encapsulated_wrapper(self, key, io_, *args, **kwargs) -> IOWrapper:
+        self.encapsulated_methods[key] = io_
+
+        getter = partial(self.encapsulated_get, key, *args, **kwargs)
+        getter_async = partial(self.encapsulated_get_async, key, *args, **kwargs)
+        putter = partial(self.encapsulated_put, key, *args, **kwargs)
+        putter_async = partial(self.encapsulated_put_async, key, *args, **kwargs)
+        joiner = partial(self.encapsulated_join, key, *args, **kwargs)
+        joiner_async = partial(self.encapsulated_join_async, key, *args, **kwargs)
 
         return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
 
     # Linking
     def set_parent(self, io_: "IORouter") -> None:
         self._parent = ReferenceType(io_)
-        self.create_link.select("create_link_parent")
 
     def create_link_none(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -631,8 +766,19 @@ class IORouter(BaseIOMultiplexer):
     def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
         return self.io_objects[name]
 
-    def create_link_parent(self, *args: Any, **kwargs: Any):
-        return self._parent().create_encapsulated_wrapper(*args, **kwargs)
+    def create_link_wrapper(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
+        return self.create_io_wrapper(name, *args, **kwargs)
+
+    def create_link_parent(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        io_ = self.create_io_wrapper(*args, **kwargs)
+        return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
 
     def link_forward(
         self,
@@ -671,7 +817,7 @@ class IORouter(BaseIOMultiplexer):
             if destination is None:
                 self.io_objects[source] = other
             elif other.parent is not None and (self.parent is not other.parent):
-                self.io_objects[source] = other.create_link_parent(source, *args, **kwargs)
+                self.io_objects[source] = other.create_link_parent(key, destination, *args, **kwargs)
             elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
                 self.io_objects[source] = d_io
 
@@ -692,11 +838,11 @@ class IORouter(BaseIOMultiplexer):
                 other.io_objects[source] = self
         else:
             if destination is None:
-                other.io_objects[source] = self
+                other.io_objects[destination] = self
             elif self.parent is not None and (self.parent is not other.parent):
-                other.io_objects[source] = self.create_link_parent(source, *args, **kwargs)
-            elif (d_io := self.create_link(destination, *args, **kwargs)) is not None:
-                other.io_objects[source] = d_io
+                other.io_objects[destination] = self.create_link_parent(key, source, *args, **kwargs)
+            elif (d_io := self.create_link(source, *args, **kwargs)) is not None:
+                other.io_objects[destination] = d_io
 
     def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
         return self.links_from
@@ -744,35 +890,29 @@ class IORouter(BaseIOMultiplexer):
     # Callback Conditions
     def create_condition_wrapper(
         self,
-        method: str = "poll_groups",
+        method: str | Callable = "poll_groups",
         *args: Any,
         **kwargs: Any,
     ) -> Callable:
-        # Build condition wrapper pieces
-        condition_method = getattr(self, method)
-
-        # Create callback wrapper
-        def condition_wrapper(*a: Any, **k:Any) -> bool:
-            return condition_method(**(kwargs | k))
+        # Get condition wrapper method
+        if isinstance(method, str):
+            method = getattr(self, method)
 
         # Return callback wrapper
-        return condition_wrapper
+        return partial(self.condition_wrapper, method, *args, **kwargs)
 
     def create_async_condition_wrapper(
         self,
-        method: str = "poll_groups_async",
+        method: str | Callable = "poll_groups_async",
         *args: Any,
         **kwargs: Any,
     ) -> Callable:
         # Build condition wrapper pieces
-        condition_method = getattr(self, method)
-
-        # Create callback wrapper
-        async def condition_wrapper(*a: Any, **k:Any) -> bool:
-            return await condition_method(**(kwargs | k))
+        if isinstance(method, str):
+            method = getattr(self, method)
 
         # Return callback wrapper
-        return condition_wrapper
+        return partial(self.conditional_wrapper_async, method, *args, **kwargs)
 
     # Callbacks
     def create_callback_wrapper(
@@ -791,11 +931,16 @@ class IORouter(BaseIOMultiplexer):
 
         # Create callback wrapper
         if as_first:
-            def callback_wrapper(*a: Any, **k:Any) -> None:
-                callback(get_method_(), **(c_kwargs | k))
+            wrapper_method = self.callback_wrapper_first
         else:
-            def callback_wrapper(*a: Any, **k:Any) -> None:
-                callback(**(get_method_() | (c_kwargs | k)))
+            wrapper_method = self.callback_wrapper_kwargs
+
+        callback_wrapper = partial(
+            wrapper_method,
+            callback=callback,
+            get_method=get_method_,
+            **c_kwargs,
+        )
 
         # Return callback wrapper
         return callback_wrapper
@@ -817,17 +962,20 @@ class IORouter(BaseIOMultiplexer):
 
         # Create callback wrapper
         if not as_first and not as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> None:
-                await callback(**(await get_method_() | (c_kwargs | k)))
+            wrapper_method = self.callback_wrapper_kwargs_async
         elif not as_first and as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> Task:
-                return create_task(callback(**(await get_method_() | (c_kwargs | k))))
+            wrapper_method = self.callback_task_kwargs_async
         elif as_first and not as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> None:
-                await callback(await get_method_(), **(c_kwargs | k))
+            wrapper_method = self.callback_wrapper_first_async
         else:
-            async def callback_wrapper(*a: Any, **k: Any) -> Task:
-                return create_task(callback(await get_method_(), **(c_kwargs | k)))
+            wrapper_method = self.callback_task_first_async
+
+        callback_wrapper = partial(
+            wrapper_method,
+            callback=callback,
+            get_method=get_method_,
+            **c_kwargs,
+        )
 
         # Return callback wrapper
         return callback_wrapper
@@ -851,11 +999,17 @@ class IORouter(BaseIOMultiplexer):
 
         # Create callback wrapper
         if as_first:
-            def callback_wrapper(*a: Any, **k:Any) -> None:
-                put_method_(callback(get_method_(), **(c_kwargs | k)))
+            wrapper_method = self.callback_routing_wrapper_first
         else:
-            def callback_wrapper(*a: Any, **k:Any) -> None:
-                put_method_(callback(**(get_method_() | (c_kwargs | k))))
+            wrapper_method = self.callback_routing_wrapper_kwargs
+
+        callback_wrapper = partial(
+            wrapper_method,
+            callback=callback,
+            get_method=get_method_,
+            put_method=put_method_,
+            **c_kwargs,
+        )
 
         # Return callback wrapper
         return callback_wrapper
@@ -880,17 +1034,21 @@ class IORouter(BaseIOMultiplexer):
 
         # Create callback wrapper
         if not as_first and not as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> None:
-                await put_method_(await callback(**(await get_method_() | (c_kwargs | k))))
+            wrapper_method = self.callback_routing_wrapper_kwargs_async
         elif not as_first and as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> Task:
-                return create_task(put_method_(create_task(callback(**(await get_method_() | (c_kwargs | k))))))
+            wrapper_method = self.callback_routing_task_kwargs_async
         elif as_first and not as_task:
-            async def callback_wrapper(*a: Any, **k: Any) -> None:
-                await put_method_(await callback(await get_method_(), **(c_kwargs | k)))
+            wrapper_method = self.callback_routing_wrapper_first_async
         else:
-            async def callback_wrapper(*a: Any, **k: Any) -> Task:
-                return create_task(put_method_(create_task(callback(await get_method_(), **(c_kwargs | k)))))
+            wrapper_method = self.callback_routing_task_first_async
+
+        callback_wrapper = partial(
+            wrapper_method,
+            callback=callback,
+            get_method=get_method_,
+            put_method=put_method_,
+            **c_kwargs,
+        )
 
         # Return callback wrapper
         return callback_wrapper
@@ -1057,7 +1215,7 @@ class IORouter(BaseIOMultiplexer):
         if callback_async is not None:
             call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
             cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks[callback_async[0]] = c_manager.format_callback(
+            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -1080,7 +1238,7 @@ class IORouter(BaseIOMultiplexer):
         if callback_async is not None:
             call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
             cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks[callback_async[0]] = c_manager.format_callback(
+            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
                 callback=call_method,
                 condition=cond_method,
                 **callback_async[3],
@@ -1393,6 +1551,43 @@ class IORouter(BaseIOMultiplexer):
         # Schedule Callback
         self.callback_manager.start_scheduler()
 
+    def put_items_callback(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+        """Puts an item into an IO object and schedule a callback.
+
+        Args:
+            name: The key name to the IO object to put the item into.
+            value: The value to put in the IO object.
+            *args: The arguments of the put of the IO object.
+            **kwargs: The keyword arguments of the put of the IO object.
+        """
+        # Put data into IO
+        for name, value in items.items():
+            self.io_objects[name].put(value, *args, **kwargs)
+
+        # Schedule Callback
+        self.callback_manager.start_scheduler()
+
+    async def put_items_callback_async(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+        """Put an item into an IO object.
+
+        Args:
+            name: The key name to the IO object to put the item into.
+            value: The value to put in the IO object.
+            *args: The arguments of the put of the IO object.
+            **kwargs: The keyword arguments of the put of the IO object.
+        """
+        # Put data into IO
+        tasks = deque()
+        for k, v in items.items():
+            t = create_task(self.io_objects[k].put_async(v, *args, **kwargs))
+            tasks.append(t)
+            t.add_done_callback(self.put_tasks.discard)
+        self.put_tasks.update(tasks)
+        await gather(*tasks)
+
+        # Schedule Callback
+        self.callback_manager.start_scheduler()
+
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
 
@@ -1458,11 +1653,11 @@ class IORouter(BaseIOMultiplexer):
 
     # Join
     def join_all(self, *args: Any, **kwargs: Any) -> None:
-        for io_object in self.io_objects.values():
+        for io_object in self.iter_visible_io_values():
             io_object.join(*args, **kwargs)
 
     async def join_all_async(self, *args: Any, **kwargs: Any) -> None:
-        await gather(*(create_task(v.join_async(*args, **kwargs)) for v in self.io_objects.values()))
+        await gather(*(create_task(v.join_async(*args, **kwargs)) for v in self.iter_visible_io_values()))
 
     def join_groups(self, groups: Iterable[str] | str = "__default__", *args: Any, **kwargs: Any) -> None:
         """Joins the required IO objects.

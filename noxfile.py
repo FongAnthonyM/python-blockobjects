@@ -66,7 +66,7 @@ def activate_virtualenv_in_precommit_hooks(session: Session) -> None:
         return
 
     for hook in hookdir.iterdir():
-        if hook.name.endswith(".sample") or not hook.is_file():
+        if hook._name.endswith(".sample") or not hook.is_file():
             continue
 
         text = hook.read_text()
