@@ -1,11 +1,6 @@
 """ iorouter.py
 An IO object which maps inputs to outputs.
 """
-from curses import wrapper
-
-from sqlalchemy.util import await_fallback
-from sympy.strategies.branch import condition
-
 # Package Header #
 from ...header import *
 
@@ -18,9 +13,8 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
-from asyncio import gather, create_task, Task, CancelledError
-from asyncio.events import AbstractEventLoop, get_event_loop, _get_running_loop
-from collections.abc import Iterable, Iterator, Callable, MutableMapping, Generator
+from asyncio import gather, create_task, Task, wait_for, shield
+from collections.abc import Iterable, Iterator, Callable, MutableMapping
 from collections import deque
 from functools import partial
 from itertools import chain
@@ -37,7 +31,9 @@ from baseobjects.objects import CallbackManager
 
 # Local Packages #
 from ...process import AsyncQueue
-from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
+from ..base import IOMap, BaseIO, IOTerminus, BaseIOMultiplexer, IOForwarder, IOWrapper
+from .basecallbackrouting import BaseCallbackRouting
+from .iocallbackwrapper import IOCallbackWrapper
 
 
 # Definitions #
@@ -51,7 +47,7 @@ async def _put_loading_async(put_method: Callable, callback: Task) -> None:
 
 
 # Classes #
-class IORouter(BaseIOMultiplexer):
+class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
     """An IO object which maps inputs to outputs, facilitating the routing of data between different IO objects.
 
     It supports synchronous and asynchronous operations, allowing for flexible data handling in various contexts.
@@ -94,121 +90,6 @@ class IORouter(BaseIOMultiplexer):
         **kwargs: Additional keyword arguments passed to parent class constructors.
     """
 
-    # Static Methods #
-    @staticmethod
-    def condition_wrapper(condition: Callable, *args: Any, **kwargs: Any) -> bool:
-        return condition(*args, **kwargs)
-
-    @staticmethod
-    async def conditional_wrapper_async(condition: Callable, *args: Any, **kwargs: Any) -> bool:
-        return await condition(*args, **kwargs)
-
-    @staticmethod
-    def callback_wrapper_kwargs(*args: Any, callback: Callable, get_method: Callable, **kwargs: Any) -> None:
-        callback(*args, **get_method() | kwargs)
-
-    @staticmethod
-    def callback_wrapper_first(*args: Any, callback: Callable, get_method: Callable, **kwargs: Any) -> None:
-        callback(get_method(), *args, **kwargs)
-
-    @staticmethod
-    async def callback_wrapper_kwargs_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        await callback(*args, **(await get_method() | kwargs))
-
-    @staticmethod
-    async def callback_wrapper_first_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        await callback(await get_method(), *args, **kwargs)
-
-    @staticmethod
-    async def callback_task_kwargs_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        **kwargs: Any,
-    ) -> Task:
-        return create_task(callback(*args, **(await get_method() | kwargs)))
-
-    @staticmethod
-    async def callback_task_first_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        **kwargs: Any,
-    ) -> Task:
-        return create_task(callback(await get_method(), *args, **kwargs))
-
-    @staticmethod
-    def callback_routing_wrapper_kwargs(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        put_method(callback(*args, **get_method() | kwargs))
-
-    @staticmethod
-    def callback_routing_wrapper_first(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        put_method(callback(get_method(), *args, **kwargs))
-
-    @staticmethod
-    async def callback_routing_wrapper_kwargs_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        await put_method(await callback(*args, **(await get_method() | kwargs)))
-
-    @staticmethod
-    async def callback_routing_wrapper_first_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> None:
-        await put_method(await callback(await get_method(), *args, **kwargs))
-
-    @staticmethod
-    async def callback_routing_task_kwargs_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> Task:
-        callback_task = create_task(callback(*args, **(await get_method() | kwargs)))
-        return create_task(_put_loading_async(put_method, callback_task))
-
-    @staticmethod
-    async def callback_routing_task_first_async(
-        *args: Any,
-        callback: Callable,
-        get_method: Callable,
-        put_method: Callable,
-        **kwargs: Any,
-    ) -> Task:
-        callback_task =  create_task(callback(await get_method(), *args, **kwargs))
-        return create_task(_put_loading_async(put_method, callback_task))
-
     # Class Attributes #
     default_get: ClassVar[str] = "get_all"
     default_get_async: ClassVar[str] = "get_all_async"
@@ -241,31 +122,32 @@ class IORouter(BaseIOMultiplexer):
     endpoints: dict[tuple[int, str, int, str], tuple["IORouter", str, "IORouter", str]]
     endpoint_tasks: set[Task]
 
-    # Callbacks
-    callback_manager: CallbackManager
-
     # IO
-    hidden_groups: set[str] = {"encapsulated"}
+    hidden_groups: set[str] = set()
     _visible_groups: set[str] | None = None
-    default_io_type: type[BaseIO] = AsyncQueue
+    default_io_type: type[BaseIO] = IOTerminus
+    default_io_listen_container_type: type[BaseIO] = AsyncQueue
     default_values: dict[str, dict[str, Any]] = {}
 
     io_objects: DeepChainMap[str | int, BaseIO]
     io_groups: IOGroupTypeMap
+    encapsulated_routers: MutableMapping[int, "IORouter"]
 
     # Get/Put Tasks
-    encapsulated_methods: dict[tuple, Callable]
-    wrapped_getter: str | None = None
-    wrapped_getter_async: str | None = None
-    wrapped_putter: str | None = "put_item_callback"
-    wrapped_putter_async: str | None = "put_item_callback_async"
+    encapsulated_wrappers: dict[tuple, BaseIO]
+    wrapped_getter: str | None = "get_item"
+    wrapped_getter_async: str | None = "get_item_async"
+    wrapped_putter: str | None = "put_item"
+    wrapped_putter_async: str | None = "put_item_async"
+
     get_tasks: set[Task]
     put_tasks: set[Task]
 
     # Listening
     _is_listening: bool = True
+    listener_functions: dict[str, list[Callable, Callable]]
     scheduled_listener_links: set[tuple[int, str, int, str]]
-    listeners: dict[tuple[int, str, int, str], Task]
+    listeners: dict[str, Task]
 
     # Properties
     @property
@@ -284,10 +166,6 @@ class IORouter(BaseIOMultiplexer):
     def visible_groups(self, groups: set[str] | None) -> None:
         self._visible_groups = groups
 
-    @property
-    def encapsulated(self) -> MutableMapping[int, BaseIO]:
-        return self.io_groups["encapsulated"]
-
     # Magic Methods #
     # Construction/Destruction
     def __init__(
@@ -297,6 +175,7 @@ class IORouter(BaseIOMultiplexer):
         hidden_groups: Iterable[str] | None = None,
         *args: Any,
         name: str | None = None,
+        default_io_type: type[BaseIO] | None = None,
         init: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -313,21 +192,20 @@ class IORouter(BaseIOMultiplexer):
         self.endpoints = {}
         self.endpoint_tasks = set()
 
-        self.callback_manager = CallbackManager()
-
         self.hidden_groups = self.hidden_groups.copy()
         if self._visible_groups is not None:
             self.visible_groups = self.visible_groups.copy()
 
         __default__ = OrderableDict()
-        encapsulated = OrderableDict()
-        self.io_objects = DeepChainMap(__default__, encapsulated)
-        self.io_groups = {"__default__": __default__, "encapsulated": encapsulated}
+        self.io_objects = DeepChainMap(__default__)
+        self.io_groups = {"__default__": __default__}
+        self.encapsulated_routers = OrderableDict()
 
-        self.encapsulated_methods = {}
+        self.encapsulated_wrappers = {}
         self.get_tasks = set()
         self.put_tasks = set()
 
+        self.listener_functions = {}
         self.scheduled_listener_links = set()
         self.listeners = dict()
 
@@ -336,7 +214,14 @@ class IORouter(BaseIOMultiplexer):
 
         # Construction #
         if init:
-            self.construct(io_, visible_groups, hidden_groups, *args, **kwargs)
+            self.construct(
+                io_,
+                visible_groups,
+                hidden_groups,
+                *args,
+                default_io_type=default_io_type,
+                **kwargs,
+            )
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -353,10 +238,6 @@ class IORouter(BaseIOMultiplexer):
             if name in state:
                 del state[name]
 
-        # for name in ("callback", "callback_async", ):
-        #     if (m := state.get(name, None)) is not None and (_self_ := getattr(m, "_self_",  None)) is not None:
-        #         del state[name]
-
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -371,8 +252,9 @@ class IORouter(BaseIOMultiplexer):
         self.listeners = dict()
         self.callback_tasks = set()
         self.directly_linked = WeakSet(state.get("directly_linked", None))
-        for en in self.encapsulated.values():
-            en._parent = ReferenceType(self)
+        if hasattr(self, "io_groups"):
+            for en in self.encapsulated_routers.values():
+                en._parent = ReferenceType(self)
 
     # Set Item
     def __setitem__(self, key: str, item: BaseIO) -> None:
@@ -400,6 +282,7 @@ class IORouter(BaseIOMultiplexer):
         hidden_groups: Iterable[str] | None = None,
         *args: Any,
         name: str | None = None,
+        default_io_type: type[BaseIO] | None = None,
         **kwargs: Any,
     ) -> None:
         """Constructs this object.
@@ -412,15 +295,20 @@ class IORouter(BaseIOMultiplexer):
         if name is not None:
             self.name = name
 
-        if isinstance(io_, MutableMapping):
-            if isinstance(next(iter(io_.values())), MutableMapping):
-                self.require_io_groups(io_)
-            else:
-                self.create_ios(groups=io_)
-        elif isinstance(io_, str):
-            self.create_io(io_)
-        elif isinstance(io_, Iterable):
-            self.create_ios(names=io_)
+        if default_io_type is not None:
+            self.default_io_type = default_io_type
+
+        match io_:
+            case MutableMapping():
+                match next(iter(io_.values()), None):
+                    case MutableMapping():
+                        self.require_io_groups(io_)
+                    case _:
+                        self.create_ios(groups=io_)
+            case str():
+                self.create_io(io_)
+            case Iterable():
+                self.create_ios(names=io_)
 
         if visible_groups is not DEFAULTSENTINEL:
             self._visible_groups = visible_groups if visible_groups is not None else set(visible_groups)
@@ -492,7 +380,7 @@ class IORouter(BaseIOMultiplexer):
         Returns:
              Returns True if al the IO objects have an item in them, False otherwise.
         """
-        return all(self.io_objects[n] for n in names)
+        return all(self.io_objects[n].poll() for n in names)
 
     async def poll_all_ios_async(self, names: Iterable[str]) -> bool:
         """Asynchronously, checks if all given IO objects in this object have an item in them.
@@ -500,7 +388,7 @@ class IORouter(BaseIOMultiplexer):
         Returns:
              Returns True if al the IO objects have an item in them, False otherwise.
         """
-        return all(self.io_objects[n] for n in names)
+        return all(self.io_objects[n].poll() for n in names)
 
     def poll_groups(self, *args: str, groups: Iterable[str] | str | None) -> bool:
         """Checks if all IO objects within given groups have an item in them.
@@ -647,6 +535,37 @@ class IORouter(BaseIOMultiplexer):
 
         return new_groups
 
+    def require_io(
+        self,
+        name: str | int,
+        group: str = "__default__",
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> BaseIO:
+        """Creates a new named IO object.
+
+        Args:
+            name: The key name of the IO to create.
+            group: The group which the new IO will be under.
+            type_: The type of IO to create.
+            *args: Positional arguments for constructing the new IO object.
+            **kwargs: Keyword arguments for constructing the new IO object.
+        """
+        if type_ is None:
+            type_ = self.default_io_type
+
+        if (io_ := self.io_groups.get(group, {}).get(name, None)) is None:
+            io_ = type_(*args, **kwargs)
+
+            if (g := self.io_groups.get(group, None)) is None:
+                self.io_groups[group] = g = OrderableDict(((name, io_),))
+                self.io_objects.maps.append(g)
+            else:
+                g[name] = io_
+
+        return io_
+
     def build_io(self, *args: Any, **kwargs: Any) -> None:
         for k, io_ in self.iter_visible_io_items():
             if (build_method := getattr(io_, "build_io", None)) is not None:
@@ -668,8 +587,15 @@ class IORouter(BaseIOMultiplexer):
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
+    def set_io(self, name: str, io_: BaseIO) -> None:
+        self.io_objects[name] = io_
+
+    async def set_io_async(self, name: str, io_: BaseIO) -> None:
+        self.io_objects[name] = io_
+
     def get_deepest(self) -> dict:
-        return {k: (v.get_deepest() if isinstance(v, IORouter) else v) for k, v in self.iter_visible_io_items()}
+        visible = chain.from_iterable(self.io_groups.get(n, {}).items() for n in self.visible_groups)
+        return {k: (v.get_deepest() if isinstance(v, IORouter) else v) for k, v in visible}
 
     def set_deepest(self, io_: dict[str, BaseIO | None]) -> None:
         for k, v in io_.items():
@@ -685,17 +611,37 @@ class IORouter(BaseIOMultiplexer):
             else:
                 self.io_objects[k] = v
 
-    def set_recursive(self, keys: tuple[str, ...], io_: BaseIO) -> None:
-        if len(keys) == 1:
-            self.io_objects[keys[0]] = io_
+    def set_inner_io_iter(self, key: str | int, keys: Iterator, io_: BaseIO) -> None:
+        try:
+            next_key = next(keys)
+        except StopIteration:
+            self.set_io(key, io_)
         else:
-            self.io_objects[keys[0]].set_recursive(keys[1:], io_)
+            self.io_objects[key].set_inner_io_iter(next_key, keys, io_)
 
-    async def set_recursive_async(self, keys: tuple[str, ...], io_: BaseIO) -> None:
-        if len(keys) == 1:
-            self.io_objects[keys[0]] = io_
+    async def set_inner_io_iter_async(self, key: str | int, keys: Iterator, io_: BaseIO) -> None:
+        try:
+            next_key = next(keys)
+        except StopIteration:
+            await self.set_io_async(key, io_)
         else:
-            await self.io_objects[keys[0]].set_recursive_async(keys[1:], io_)
+            await self.io_objects[key].set_inner_io_iter_async(next_key, keys, io_)
+
+    def set_inner_io(self, keys: Iterable[str | int] | str, io_: BaseIO) -> None:
+        if isinstance(keys, str):
+            self.io_objects[keys].set_io(keys, io_)
+        else:
+            key_iter = iter(keys)
+            key = next(key_iter)
+            self.set_inner_io_iter(key, key_iter, io_)
+
+    async def set_inner_io_async(self, keys: Iterable[str | int] | str, io_: BaseIO) -> None:
+        if isinstance(keys, str):
+            await self.io_objects[keys].set_io_aysnc(keys, io_)
+        else:
+            key_iter = iter(keys)
+            key = next(key_iter)
+            await self.set_inner_io_iter_async(key, key_iter, io_)
 
     def iter_groups_io_keys(self, *args: str, groups: Iterable[str] | str | None) -> Iterable[str]:
         group_names = args if groups is None else chain(args, (groups,) if isinstance(groups, str) else groups)
@@ -717,582 +663,6 @@ class IORouter(BaseIOMultiplexer):
 
     def iter_visible_io_items(self) -> Iterable[tuple[str, BaseIO]]:
         return chain.from_iterable(self.io_groups.get(n, {}).items() for n in self.visible_groups)
-
-    # Encapsulated IO
-    def encapsulate_io(self, io_: "IORouter") -> None:
-        self.io_groups["encapsulated"][io_.id_number] = io_
-        io_.set_parent(self)
-
-    def encapsulated_put(self, key, *arg: Any, **kwargs) -> None:
-        self.encapsulated_methods[key].put(*arg, **kwargs)
-
-    async def encapsulated_put_async(self, key: int, *arg: Any, **kwargs) -> None:
-        await self.encapsulated_methods[key].put_async(*arg, **kwargs)
-
-    def encapsulated_get(self, key, *args, **kwargs) -> Any:
-        return self.encapsulated_methods[key].get( *args, **kwargs)
-
-    async def encapsulated_get_async(self, key, *args, **kwargs) -> Any:
-        return await self.encapsulated_methods[key].get_async(*args, **kwargs)
-
-    def encapsulated_join(self, key, *args, **kwargs) -> None:
-        self.encapsulated_methods[key].join(*args, **kwargs)
-
-    async def encapsulated_join_async(self, key, *args, **kwargs) -> None:
-        await self.encapsulated_methods[key].join_async(*args, **kwargs)
-
-    def create_encapsulated_wrapper(self, key, io_, *args, **kwargs) -> IOWrapper:
-        self.encapsulated_methods[key] = io_
-
-        getter = partial(self.encapsulated_get, key, *args, **kwargs)
-        getter_async = partial(self.encapsulated_get_async, key, *args, **kwargs)
-        putter = partial(self.encapsulated_put, key, *args, **kwargs)
-        putter_async = partial(self.encapsulated_put_async, key, *args, **kwargs)
-        joiner = partial(self.encapsulated_join, key, *args, **kwargs)
-        joiner_async = partial(self.encapsulated_join_async, key, *args, **kwargs)
-
-        return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
-
-    # Linking
-    def set_parent(self, io_: "IORouter") -> None:
-        self._parent = ReferenceType(io_)
-
-    def create_link_none(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    def create_link_self(self, *args: Any, **kwargs: Any) -> BaseIO:
-        return self
-
-    def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
-        return self.io_objects[name]
-
-    def create_link_wrapper(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
-        return self.create_io_wrapper(name, *args, **kwargs)
-
-    def create_link_parent(
-        self,
-        key,
-        *args: Any,
-        e_args: Iterable[Any, ...] = (),
-        e_kwargs: MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> BaseIO:
-        io_ = self.create_io_wrapper(*args, **kwargs)
-        return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
-
-    def link_forward(
-        self,
-        source: str,
-        other: "IORouter",
-        destination: str | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        """Establishes a forward link from this router to another IO object.
-
-        This method creates a link between the `source` IO object in this router and the `other` IO object. If the
-        `destination` is specified, the link is made with the IO object within the `other` object. If the link is
-        identified as a listen link (where this router should listen for data from the `other` object),
-        the `other` object is added to the scheduled listener links. Otherwise, if a `destination` is specified and
-        a link IO object is created by the `other` router, it replaces the `source` IO object in this router.
-
-        Args:
-            source: The name of the source IO object in this router.
-            other: The IO object to link to.
-            destination: The name of the destination IO object in the `other` object. If `None`, the link is made
-                         directly to the `other` object.
-            *args: Additional positional arguments passed to the `create_link` method of the `other` object
-                   if a destination is specified.
-            **kwargs: Additional keyword arguments passed to the `create_link` method of the `other` object
-                      if a destination is specified.
-        """
-        key = (self.id_number, source, other.id_number, destination)
-        self.links_to[key] = other
-        other.links_from[key] = self
-        if self.is_listen_link(self, other):
-            other.scheduled_listener_links.add(key)
-            if destination is None:
-                self.io_objects[source] = other
-        else:
-            if destination is None:
-                self.io_objects[source] = other
-            elif other.parent is not None and (self.parent is not other.parent):
-                self.io_objects[source] = other.create_link_parent(key, destination, *args, **kwargs)
-            elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
-                self.io_objects[source] = d_io
-
-    def link_backward(
-        self,
-        other: "IORouter",
-        source: str,
-        destination: str | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        key = (other.id_number, source, self.id_number, destination)
-        other.links_to[key] = self
-        self.links_from[key] = other
-        if self.is_listen_link(other, self):
-            self.scheduled_listener_links.add(key)
-            if destination is None:
-                other.io_objects[source] = self
-        else:
-            if destination is None:
-                other.io_objects[destination] = self
-            elif self.parent is not None and (self.parent is not other.parent):
-                other.io_objects[destination] = self.create_link_parent(key, source, *args, **kwargs)
-            elif (d_io := self.create_link(source, *args, **kwargs)) is not None:
-                other.io_objects[destination] = d_io
-
-    def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
-        return self.links_from
-
-    async def get_links_from_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
-        return self.links_from
-
-    def get_links_to(self) -> dict[tuple[int, str, int, str], "IORouter"]:
-        return self.links_to
-
-    async def get_links_to_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
-        return self.links_to
-
-    def get_links(self) -> dict[str, IOMap] | None:
-        """Gets the links of this IO object.
-
-       Returns:
-           The links of this IO object.
-       """
-        return {n: m.generate_io_map() for n, m in self.iter_visible_io_items()}
-
-    def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
-        if endpoints is None:
-            endpoints = {}
-
-        if memo is None:
-            memo = set()
-
-        if self.directly_linked:
-            for next_io in self.directly_linked:
-                if next_io not in memo:
-                    memo.add(next_io)
-                    next_io.get_link_endpoints(endpoints)
-        else:
-            for k, next_io in self.links_to.items():
-                _, n, _, d = k
-                if self.is_endpoint_link(self, next_io):
-                    endpoints[k] = (self, n, next_io, d)
-                elif self not in memo:
-                    memo.add(self)
-                    next_io.get_link_endpoints(endpoints)
-
-        return endpoints
-
-    # Callback Conditions
-    def create_condition_wrapper(
-        self,
-        method: str | Callable = "poll_groups",
-        *args: Any,
-        **kwargs: Any,
-    ) -> Callable:
-        # Get condition wrapper method
-        if isinstance(method, str):
-            method = getattr(self, method)
-
-        # Return callback wrapper
-        return partial(self.condition_wrapper, method, *args, **kwargs)
-
-    def create_async_condition_wrapper(
-        self,
-        method: str | Callable = "poll_groups_async",
-        *args: Any,
-        **kwargs: Any,
-    ) -> Callable:
-        # Build condition wrapper pieces
-        if isinstance(method, str):
-            method = getattr(self, method)
-
-        # Return callback wrapper
-        return partial(self.conditional_wrapper_async, method, *args, **kwargs)
-
-    # Callbacks
-    def create_callback_wrapper(
-        self,
-        callback: Callable,
-        get_method: str = "get",
-        callback_kwargs: dict[str, Any] | None = None,
-        get_kwargs: dict[str, Any] | None = None,
-        *args: Any,
-        as_first: bool = False,
-        **kwargs: Any,
-    ) -> Callable:
-        # Build callback wrapper pieces
-        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
-        c_kwargs = callback_kwargs or {}
-
-        # Create callback wrapper
-        if as_first:
-            wrapper_method = self.callback_wrapper_first
-        else:
-            wrapper_method = self.callback_wrapper_kwargs
-
-        callback_wrapper = partial(
-            wrapper_method,
-            callback=callback,
-            get_method=get_method_,
-            **c_kwargs,
-        )
-
-        # Return callback wrapper
-        return callback_wrapper
-
-    def create_async_callback_wrapper(
-        self,
-        callback: Callable,
-        get_method: str = "get_async",
-        callback_kwargs: dict[str, Any] | None = None,
-        get_kwargs: dict[str, Any] | None = None,
-        *args: Any,
-        as_first: bool = False,
-        as_task: bool = False,
-        **kwargs: Any,
-    ) -> Callable:
-        # Build callback wrapper pieces
-        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
-        c_kwargs = callback_kwargs or {}
-
-        # Create callback wrapper
-        if not as_first and not as_task:
-            wrapper_method = self.callback_wrapper_kwargs_async
-        elif not as_first and as_task:
-            wrapper_method = self.callback_task_kwargs_async
-        elif as_first and not as_task:
-            wrapper_method = self.callback_wrapper_first_async
-        else:
-            wrapper_method = self.callback_task_first_async
-
-        callback_wrapper = partial(
-            wrapper_method,
-            callback=callback,
-            get_method=get_method_,
-            **c_kwargs,
-        )
-
-        # Return callback wrapper
-        return callback_wrapper
-
-    def create_routing_callback_wrapper(
-        self,
-        callback: Callable,
-        get_method: str = "get",
-        put_method: str = "put",
-        callback_kwargs: dict[str, Any] | None = None,
-        get_kwargs: dict[str, Any] | None = None,
-        put_kwargs: dict[str, Any] | None = None,
-        *args: Any,
-        as_first: bool = False,
-        **kwargs: Any,
-    ) -> Callable:
-        # Build callback wrapper pieces
-        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
-        put_method_ = partial(getattr(self, put_method), **(put_kwargs or {}))
-        c_kwargs = callback_kwargs or {}
-
-        # Create callback wrapper
-        if as_first:
-            wrapper_method = self.callback_routing_wrapper_first
-        else:
-            wrapper_method = self.callback_routing_wrapper_kwargs
-
-        callback_wrapper = partial(
-            wrapper_method,
-            callback=callback,
-            get_method=get_method_,
-            put_method=put_method_,
-            **c_kwargs,
-        )
-
-        # Return callback wrapper
-        return callback_wrapper
-
-    def create_async_routing_callback_wrapper(
-        self,
-        callback: Callable,
-        get_method: str = "get_async",
-        put_method: str = "put_async",
-        callback_kwargs: dict[str, Any] | None = None,
-        get_kwargs: dict[str, Any] | None = None,
-        put_kwargs: dict[str, Any] | None = None,
-        *args: Any,
-        as_first: bool = False,
-        as_task: bool = False,
-        **kwargs: Any,
-    ) -> Callable:
-        # Build callback wrapper pieces
-        get_method_ = partial(getattr(self, get_method), **(get_kwargs or {}))
-        put_method_ = partial(getattr(self, put_method), **(put_kwargs or {}))
-        c_kwargs = callback_kwargs or {}
-
-        # Create callback wrapper
-        if not as_first and not as_task:
-            wrapper_method = self.callback_routing_wrapper_kwargs_async
-        elif not as_first and as_task:
-            wrapper_method = self.callback_routing_task_kwargs_async
-        elif as_first and not as_task:
-            wrapper_method = self.callback_routing_wrapper_first_async
-        else:
-            wrapper_method = self.callback_routing_task_first_async
-
-        callback_wrapper = partial(
-            wrapper_method,
-            callback=callback,
-            get_method=get_method_,
-            put_method=put_method_,
-            **c_kwargs,
-        )
-
-        # Return callback wrapper
-        return callback_wrapper
-
-    # Callback Management
-    def register_callback(
-        self,
-        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callback is not None:
-            call_method = self.create_callback_wrapper(**callback[1])
-            cond_method = self.create_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback[3],
-            )
-        if callback_async is not None:
-            call_method = self.create_async_callback_wrapper(**callback_async[1])
-            cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback_async[3],
-            )
-
-    async def register_callback_async(
-        self,
-        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callback is not None:
-            call_method = self.create_callback_wrapper(**callback[1])
-            cond_method = self.create_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback[3],
-            )
-        if callback_async is not None:
-            call_method = self.create_async_callback_wrapper(**callback_async[1])
-            cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback_async[3],
-            )
-
-    def register_callbacks(
-        self,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callbacks is not None:
-            c_manager.callbacks.update((
-                (n, c_manager.format_callback(
-                    self.create_callback_wrapper(**call),
-                    self.create_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks.items()
-            ))
-        if callbacks_async is not None:
-            c_manager.callbacks_async.update((
-                (n, c_manager.format_callback(
-                    self.create_async_callback_wrapper(**call),
-                    self.create_async_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks_async.items()
-            ))
-
-    async def register_callbacks_async(
-        self,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callbacks is not None:
-            c_manager.callbacks.update((
-                (n, c_manager.format_callback(
-                    self.create_callback_wrapper(**call),
-                    self.create_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks.items()
-            ))
-        if callbacks_async is not None:
-            c_manager.callbacks_async.update((
-                (n, c_manager.format_callback(
-                    self.create_async_callback_wrapper(**call),
-                    self.create_async_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks_async.items()
-            ))
-
-    def _register_inner_callbacks(
-        self,
-        names: Iterator[str],
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        try:
-            name = next(names)
-        except StopIteration:
-            self.register_callbacks(callbacks, callbacks_async)
-        else:
-            self.io_objects[name]._register_inner_callbacks(names, callbacks, callbacks_async)
-
-    def register_inner_callbacks(
-        self,
-        names: Iterable[str] | str,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        if isinstance(names, str):
-            self.io_objects[names].register_callbacks(callbacks=callbacks, callbacks_async=callbacks_async)
-        else:
-            self._register_inner_callbacks(iter(names), callbacks, callbacks_async)
-
-    async def _register_inner_callbacks_async(
-        self,
-        names: Iterator[str],
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        try:
-            name = next(names)
-        except StopIteration:
-            await self.register_callbacks_async(callbacks, callbacks_async)
-        else:
-            await self.io_objects[name]._register_inner_callbacks_async(names, callbacks, callbacks_async)
-
-    async def register_inner_callbacks_async(
-        self,
-        names: Iterable[str] | str,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        if isinstance(names, str):
-            await self.io_objects[names].register_callbacks_async(callbacks=callbacks, callbacks_async=callbacks_async)
-        else:
-            await self._register_inner_callbacks_async(iter(names), callbacks, callbacks_async)
-
-    def register_routing_callback(
-        self,
-        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callback is not None:
-            call_method = self.create_routing_callback_wrapper(**callback[1])
-            cond_method = self.create_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback[3],
-            )
-        if callback_async is not None:
-            call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
-            cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback_async[3],
-            )
-
-    async def register_routing_callback_async(
-        self,
-        callback: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-        callback_async: tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callback is not None:
-            call_method = self.create_routing_callback_wrapper(**callback[1])
-            cond_method = self.create_condition_wrapper(**callback[2])
-            c_manager.callbacks[callback[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback[3],
-            )
-        if callback_async is not None:
-            call_method = self.create_async_routing_callback_wrapper(**callback_async[1])
-            cond_method = self.create_async_condition_wrapper(**callback_async[2])
-            c_manager.callbacks_async[callback_async[0]] = c_manager.format_callback(
-                callback=call_method,
-                condition=cond_method,
-                **callback_async[3],
-            )
-
-    def register_routing_callbacks(
-        self,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callbacks is not None:
-            c_manager.callbacks.update((
-                (n, c_manager.format_callback(
-                    self.create_routing_callback_wrapper(**call),
-                    self.create_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks.items()
-            ))
-        if callbacks_async is not None:
-            c_manager.callbacks_async.update((
-                (n, c_manager.format_callback(
-                    self.create_async_routing_callback_wrapper(**call),
-                    self.create_async_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks_async.items()
-            ))
-
-    async def register_routing_callbacks_async(
-        self,
-        callbacks: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-        callbacks_async: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] | None = None,
-    ) -> None:
-        c_manager = self.callback_manager
-        if callbacks is not None:
-            c_manager.callbacks.update((
-                (n, c_manager.format_callback(
-                    self.create_routing_callback_wrapper(**call),
-                    self.create_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks.items()
-            ))
-        if callbacks_async is not None:
-            c_manager.callbacks_async.update((
-                (n, c_manager.format_callback(
-                    self.create_async_routing_callback_wrapper(**call),
-                    self.create_async_condition_wrapper(**cond),
-                    **kw,
-                ))
-                for n, (call, cond, kw) in callbacks_async.items()
-            ))
 
     # Get
     def get_item(self, name: str | int, **kwargs: Any) -> Any:
@@ -1409,8 +779,7 @@ class IORouter(BaseIOMultiplexer):
             tasks.append(t)
             t.add_done_callback(self.get_tasks.discard)
         self.get_tasks.update(tasks)
-        d = dict(zip(keys, await gather(*tasks)))
-        return d
+        return dict(zip(keys, await gather(*tasks)))
 
     def get_groups(
         self,
@@ -1499,6 +868,28 @@ class IORouter(BaseIOMultiplexer):
         """
         await self.io_objects[name].put_async(value, *args, **kwargs)
 
+    def put_item_value(self, value: Any, name: str,  *args: Any, **kwargs: Any) -> None:
+        """Put an item into an IO object.
+
+        Args:
+            value: The value to put in the IO object.
+            name: The key name to the IO object to put the item into.
+            *args: The arguments of the put of the IO object.
+            **kwargs: The keyword arguments of the put of the IO object.
+        """
+        self.io_objects[name].put(value, *args, **kwargs)
+
+    async def put_item_value_async(self, value: Any, name: str, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously put an item into an IO object.
+
+        Args:
+            value: The value to put in the IO object.
+            name: The key name to the IO object to put the item into.
+            *args: The arguments of the put of the IO object.
+            **kwargs: The keyword arguments of the put of the IO object.
+        """
+        await self.io_objects[name].put_async(value, *args, **kwargs)
+
     def put_ordered(self, values: Iterable[Any], *args: Any, **kwargs: Any) -> None:
         """Puts given values into their IO objects based on this object's order.
 
@@ -1521,37 +912,7 @@ class IORouter(BaseIOMultiplexer):
         items = zip(self.iter_visible_io_keys(), values)
         await gather(*(self.io_objects[k].put_async(v, *args, **kwargs) for k, v in items))
 
-    def put_item_callback(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
-        """Puts an item into an IO object and schedule a callback.
-
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        # Put data into IO
-        self.io_objects[name].put(value, *args, **kwargs)
-
-        # Schedule Callback
-        self.callback_manager.start_scheduler()
-
-    async def put_item_callback_async(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
-        """Put an item into an IO object.
-
-        Args:
-            name: The key name to the IO object to put the item into.
-            value: The value to put in the IO object.
-            *args: The arguments of the put of the IO object.
-            **kwargs: The keyword arguments of the put of the IO object.
-        """
-        # Put data into IO
-        await self.io_objects[name].put_async(value, *args, **kwargs)
-
-        # Schedule Callback
-        self.callback_manager.start_scheduler()
-
-    def put_items_callback(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+    def put_items(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
         """Puts an item into an IO object and schedule a callback.
 
         Args:
@@ -1564,10 +925,7 @@ class IORouter(BaseIOMultiplexer):
         for name, value in items.items():
             self.io_objects[name].put(value, *args, **kwargs)
 
-        # Schedule Callback
-        self.callback_manager.start_scheduler()
-
-    async def put_items_callback_async(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+    async def put_items_async(self, items: dict[str, Any], *args: Any, **kwargs: Any) -> None:
         """Put an item into an IO object.
 
         Args:
@@ -1584,9 +942,6 @@ class IORouter(BaseIOMultiplexer):
             t.add_done_callback(self.put_tasks.discard)
         self.put_tasks.update(tasks)
         await gather(*tasks)
-
-        # Schedule Callback
-        self.callback_manager.start_scheduler()
 
     def put_all(self, __m: Any = None, /, **kwargs: Any) -> None:
         """Puts all given keyword IO values into their IO objects.
@@ -1685,6 +1040,19 @@ class IORouter(BaseIOMultiplexer):
             await gather(*(create_task(r_io.join_async(*args, **kwargs)) for r_io in ios))
 
     # Tasks
+    def join_tasks(self) -> None:
+        """Joins all currently scheduled tasks."""
+        for task in chain(self.get_tasks, self.put_tasks):
+            while not task.done():
+                pass
+
+    async def join_tasks_async(self, timeout: float | None = None) -> None:
+        """Asynchronously joins all currently scheduled tasks."""
+        if timeout is None:
+            await gather(*chain(self.get_tasks, self.put_tasks))
+        else:
+            await wait_for(gather(*chain(self.get_tasks, self.put_tasks)), timeout=timeout)
+
     def cancel_tasks(self) -> None:
         for task in chain(self.get_tasks, self.put_tasks):
             task.cancel()
@@ -1694,56 +1062,494 @@ class IORouter(BaseIOMultiplexer):
         self.stop_listeners()
         self.callback_manager.cancel_tasks()
 
-    async def stop_async(self) -> None:
-        self.cancel_tasks()
-        self.stop_listeners()
-        self.callback_manager.cancel_tasks()
+    async def stop_async(self, timeout: float | None = 1.0) -> None:
+        try:
+            await self.join_tasks_async(timeout=timeout)
+        except TimeoutError:
+            self.cancel_tasks()
 
-    # Listening
-    async def listen_link_async(self, key: tuple[int, str, int, str], *args, **kwargs) -> None:
-        """Asynchronously listens for data from a linked IO and forwards it to the current IO's data queue.
+        await self.stop_listeners_async(timeout=timeout)
 
-        This method continuously listens for data from a linked IO object based on the provided key. Once data is
-        received, it is put into the current IO's data queue. Additionally, any scheduled callbacks are executed
-        after putting data into the queue. This process repeats as long as the `_is_listening` flag is set to True.
+        try:
+            await self.callback_manager.join_tasks_async(timeout=timeout)
+        except TimeoutError:
+            self.callback_manager.cancel_tasks()
+
+        tasks = deque()
+        for io_ in self.encapsulated_routers.values():
+            tasks.append(io_.stop_async(timeout=timeout))
+        await gather(*tasks)
+
+    # Encapsulated IO
+    def encapsulate_io(self, io_: "IORouter") -> None:
+        self.encapsulated_routers[io_.id_number] = io_
+        io_.set_parent(self)
+
+    def encapsulated_put(self, key, *arg: Any, **kwargs) -> None:
+        self.encapsulated_wrappers[key].put(*arg, **kwargs)
+
+    async def encapsulated_put_async(self, key: int, *arg: Any, **kwargs) -> None:
+        await self.encapsulated_wrappers[key].put_async(*arg, **kwargs)
+
+    def encapsulated_get(self, key, *args, **kwargs) -> Any:
+        return self.encapsulated_wrappers[key].get(*args, **kwargs)
+
+    async def encapsulated_get_async(self, key, *args, **kwargs) -> Any:
+        return await self.encapsulated_wrappers[key].get_async(*args, **kwargs)
+
+    def encapsulated_join(self, key, *args, **kwargs) -> None:
+        self.encapsulated_wrappers[key].join(*args, **kwargs)
+
+    async def encapsulated_join_async(self, key, *args, **kwargs) -> None:
+        await self.encapsulated_wrappers[key].join_async(*args, **kwargs)
+
+    def create_encapsulated_wrapper(self, key, io_, *args, **kwargs) -> IOWrapper:
+        self.encapsulated_wrappers[key] = io_
+
+        getter = partial(self.encapsulated_get, key, *args, **kwargs)
+        getter_async = partial(self.encapsulated_get_async, key, *args, **kwargs)
+        putter = partial(self.encapsulated_put, key, *args, **kwargs)
+        putter_async = partial(self.encapsulated_put_async, key, *args, **kwargs)
+        joiner = partial(self.encapsulated_join, key, *args, **kwargs)
+        joiner_async = partial(self.encapsulated_join_async, key, *args, **kwargs)
+
+        return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
+
+    # Linking
+    def set_parent(self, io_: "IORouter") -> None:
+        self._parent = ReferenceType(io_)
+
+    def create_link_none(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def create_link_self(self, *args: Any, **kwargs: Any) -> BaseIO:
+        return self
+
+    def create_link_pass_io(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
+        return self.io_objects[name]
+
+    def create_link_wrapper(self, name: str, *args: Any, **kwargs: Any) -> BaseIO:
+        return self.create_io_wrapper(name, *args, **kwargs)
+
+    def create_link_parent(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        io_ = self.create_io_wrapper(*args, **kwargs)
+        return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
+
+    def link_forward(
+        self,
+        source: str,
+        other: "IORouter",
+        destination: str | None = None,
+        *args: Any,
+        encapsulate: bool = False,
+        as_listener: bool | None = None,
+        get: Callable | str = "get_item_async",
+        put: Callable | str = "put_item_async",
+        get_kwargs: dict[str, Any] | None = None,
+        put_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Establishes a forward link from this router to another IO object.
+
+        This method creates a link between the `source` IO object in this router and the `other` IO object. If the
+        `destination` is specified, the link is made with the IO object within the `other` object. If the link is
+        identified as a listen link (where this router should listen for data from the `other` object),
+        the `other` object is added to the scheduled listener links. Otherwise, if a `destination` is specified and
+        a link IO object is created by the `other` router, it replaces the `source` IO object in this router.
 
         Args:
-            key: A tuple containing the identifiers for the linked IO. The structure is (int, str, int, str) where
-                 the elements represent unique identifiers and names for the origin and destination IOs.
-            *args: Arguments which may be specified in an overriding method.
-            **kwargs: Keyword arguments which may be specified in an overriding method.
+            source: The name of the source IO object in this router.
+            other: The IO object to link to.
+            destination: The name of the destination IO object in the `other` object. If `None`, the link is made
+                         directly to the `other` object.
+            *args: Additional positional arguments passed to the `create_link` method of the `other` object
+                   if a destination is specified.
+            **kwargs: Additional keyword arguments passed to the `create_link` method of the `other` object
+                      if a destination is specified.
         """
-        _, origin, _, name = key
-        io_ = self.links_from[key]
-        # Determine the appropriate get method based on whether the origin is specified.
-        get_method = io_.get_async if origin is None else partial(io_.get_item_async, origin)
+        key = (self.id_number, source, other.id_number, destination)
+        self.links_to[key] = other
+        other.links_from[key] = self
 
+        if encapsulate:
+            self.encapsulate_io(other)
+
+        if as_listener or (as_listener is None and self.is_listen_link(self, other)):
+            if isinstance(self.io_objects[source], IORouter):
+                self.create_io_listen_container(name=source)
+            if destination is None:
+                listener_name = f"{self.name}:{source}_to_{other.name}"
+                if isinstance(put, str) and "put_item_async":
+                    put = "put_async"
+            else:
+                listener_name = f"{self.name}:{source}_to_{other.name}:{destination}"
+            other.register_listener_router(
+                name=listener_name,
+                io_=self,
+                get=get,
+                put=put,
+                get_kwargs={"name":source} | (get_kwargs or {}),
+                put_kwargs={"name":destination} | (put_kwargs or {}),
+            )
+        else:
+            if destination is None:
+                self.io_objects[source] = other
+            elif other.parent is not None and (self.parent is not other.parent):
+                self.io_objects[source] = other.create_link_parent(key, destination, *args, **kwargs)
+            elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
+                self.io_objects[source] = d_io
+
+    def link_backward(
+        self,
+        other: "IORouter",
+        source: str,
+        destination: str | None = None,
+        *args: Any,
+        encapsulate: bool = False,
+        as_listener: bool | None = None,
+        get: Callable | str = "get_item_async",
+        put: Callable | str = "put_item_async",
+        get_kwargs: dict[str, Any] | None = None,
+        put_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        key = (other.id_number, source, self.id_number, destination)
+        other.links_to[key] = self
+        self.links_from[key] = other
+
+        if encapsulate:
+            self.encapsulate_io(other)
+
+        if as_listener or (as_listener is None and self.is_listen_link(other, self)):
+            if isinstance(other.io_objects[source], IORouter):
+                other.create_io_listen_container(name=source)
+            if destination is None:
+                listener_name = f"{other.name}:{source}_to_{self.name}"
+                if isinstance(put, str) and "put_item_async":
+                    put = "put_async"
+            else:
+                listener_name = f"{other.name}:{source}_to_{self.name}:{destination}"
+            self.register_listener_router(
+                name=listener_name,
+                io_=other,
+                get=get,
+                put=put,
+                get_kwargs={"name": source} | (get_kwargs or {}),
+                put_kwargs={"name": destination} | (put_kwargs or {}),
+            )
+        else:
+            if destination is None:
+                other.io_objects[destination] = self
+            elif self.parent is not None and (self.parent is not other.parent):
+                other.io_objects[destination] = self.create_link_parent(key, source, *args, **kwargs)
+            elif (d_io := self.create_link(source, *args, **kwargs)) is not None:
+                other.io_objects[destination] = d_io
+
+    def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_from
+
+    async def get_links_from_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_from
+
+    def get_links_to(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_to
+
+    async def get_links_to_async(self) -> dict[tuple[int, str, int, str], "IORouter"]:
+        return self.links_to
+
+    def get_links(self) -> dict[str, IOMap] | None:
+        """Gets the links of this IO object.
+
+       Returns:
+           The links of this IO object.
+       """
+        return {n: m.generate_io_map() for n, m in self.iter_visible_io_items()}
+
+    def get_link_endpoints(self, endpoints: dict | None = None, memo: set | None = None) -> dict["IORouter", Any]:
+        if endpoints is None:
+            endpoints = {}
+
+        if memo is None:
+            memo = set()
+
+        if self.directly_linked:
+            for next_io in self.directly_linked:
+                if next_io not in memo:
+                    memo.add(next_io)
+                    next_io.get_link_endpoints(endpoints)
+        else:
+            for k, next_io in self.links_to.items():
+                _, n, _, d = k
+                if self.is_endpoint_link(self, next_io):
+                    endpoints[k] = (self, n, next_io, d)
+                elif self not in memo:
+                    memo.add(self)
+                    next_io.get_link_endpoints(endpoints)
+
+        return endpoints
+
+    # Listening
+    def register_listener(self, name: str, get: Callable | str, put: Callable, get_kwargs: dict[str, Any]) -> None:
+        if isinstance(put, str):
+            put = partial(getattr(self, put), **get_kwargs)
+
+        self.listener_functions[name] = [get, put]
+
+    def register_listener_router(
+        self,
+        name: str,
+        io_: "IORouter",
+        get: str,
+        put: Callable | str,
+        get_kwargs: dict[str, Any],
+        put_kwargs: dict[str, Any],
+    ) -> None:
+        if isinstance(put, str):
+            put = partial(getattr(self, put), **put_kwargs)
+
+        get = partial(getattr(io_, get), **get_kwargs)
+
+        self.listener_functions[name] = [get, put]
+
+    def create_io_listen_container(
+        self,
+        name: str,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if type_ is None:
+            type_ = self.default_io_listen_container_type
+
+        self.io_objects[name] = type_(*args, **kwargs)
+
+    async def listen_get_put_functions_async(self, get: Callable, put: Callable) -> None:
+        """Asynchronously listens for data from a get function and forwards it to a put function.
+
+        Args:
+            get: The get function to listen.
+            put: The put function to forward to the get output to.
+        """
         while self._is_listening:
-            # Retrieve data from the linked IO and put it into the current IO's data queue.
-            await self.io_objects[name].put_async(await get_method())
-            # Start callback scheduler
-            self.callback_manager.start_scheduler()
-
-    def _remove_listener(self, task: Task, key: tuple[int, str, int, str]) -> None:
-        del self.listeners[key]
+            await put(await get())
 
     def start_listeners(self) -> None:
         if not self._is_listening:
             self._is_listening = True
-        for key in self.scheduled_listener_links:
-            if key not in self.listeners:
-                self.listeners[key] = create_task(self.listen_link_async(key))
+
+        for name, (put, get) in self.listener_functions.items():
+            if name not in self.listeners:
+                self.listeners[name] = task = create_task(self.listen_get_put_functions_async(get, put))
+                task.add_done_callback(partial(self._remove_listener, name=name))
 
     async def start_listeners_async(self) -> None:
-        if not self._is_listening:
-            self._is_listening = True
-        for key in self.scheduled_listener_links:
-            if key not in self.listeners:
-                self.listeners[key] = create_task(self.listen_link_async(key))
+        self.start_listeners()
+
+    def _remove_listener(self, task: Task, name: str) -> None:
+        del self.listeners[name]
 
     def stop_listeners(self, msg: Any | None = None) -> None:
         self._is_listening = False
+
         for listener in self.listeners.values():
             listener.cancel(msg)
 
-        self.listeners.clear()
+    async def stop_listeners_async(self, timeout: float | None = None, msg: Any | None = None) -> None:
+        self._is_listening = False
+        try:
+            await wait_for(gather(*(shield(listener) for listener in self.listeners.values())), timeout=timeout)
+        except TimeoutError:
+            for listener in self.listeners.values():
+                listener.cancel(msg)
+
+    # Callback
+    def register_io_callback(
+        self,
+        name: str,
+        io_: BaseIO | None = None,
+        callback: Callable | None = None,
+        callback_async: Callable | None = None,
+        get: str | None = None,
+        get_async: str | None = None,
+        put: str | None = None,
+        put_async: str | None = None,
+    ) -> None:
+        if io_ is None:
+            io_ = self.io_objects[name]
+
+        if callback is None:
+            if (callback := self.callback_manager.callbacks.get(name, None)) is None:
+                if (scheduler := self.callback_manager.schedulers.get(name, None)) is None:
+                    self.callback_manager.register_scheduler(name)
+                    scheduler = self.callback_manager.schedulers[name]
+                self.callback_manager.register_scheduler_callback(name, scheduler)
+                callback = self.callback_manager.callbacks[name]
+        else:
+            self.callback_manager.register_callback(name, callback)
+
+        if callback_async is None:
+            if (callback_async := self.callback_manager.callbacks_async.get(name, None)) is None:
+                if (scheduler := self.callback_manager.schedulers.get(name, None)) is None:
+                    self.callback_manager.register_scheduler(name)
+                    scheduler = self.callback_manager.schedulers[name]
+                self.callback_manager.register_scheduler_callback(name, scheduler)
+                callback_async = self.callback_manager.callbacks_async[name]
+        else:
+            self.callback_manager.register_callback(name, callback, is_async=True)
+
+        self.io_objects[name] = IOCallbackWrapper(
+            io_,
+            callback,
+            callback_async,
+            get,
+            get_async,
+            put,
+            put_async,
+        )
+
+    def map_conditional_callbacks_to_groups(
+        self,
+        groups: Iterable[str] | str | None,
+        condition_names: Iterable[str],
+    ) -> None:
+        for name in self.iter_groups_io_keys(groups=groups):
+            self.callback_manager.map_conditionals_to_group(name, condition_names)
+
+    def create_groups_to_io_callback(
+        self,
+        groups: str | Iterable[str],
+        io_name: str,
+        callback: Callable | None = None,
+        callback_async: Callable | None = None,
+        cc_kwargs: dict[str, Any] | None = None,
+        cc_async_kwargs: dict[str, Any] | None = None,
+        defaults: dict[str, Any] | None = None,
+        get: str | None = None,
+        get_async: str | None = None,
+        put: str | None = "after_put",
+        put_async: str | None = "after_put_async",
+        *,
+        get_groups: str | Iterable[str] | None = None,
+    )-> None:
+        if get_groups is None:
+            get_groups = groups
+
+        if callback is None:
+            callback = self.inputs_to_output
+
+        if callback_async is None:
+            callback_async = self.inputs_to_output_async
+
+        conditional_callback_name = f"{str(groups)}_to_{io_name}"
+        conditional_callback_async_name = f"{str(groups)}_to_{io_name}_async"
+        conditional_callback_kwargs = {
+            "name": conditional_callback_name,
+            "callback_kwargs": {
+                "callback": callback,
+                "get_method": "get_groups",
+                "get_kwargs": {"groups": get_groups, "defaults": (defaults or {})},
+                "put_method": "put_item_value",
+                "put_kwargs": {"name": io_name},
+            },
+            "condition_kwargs": {"method": "poll_groups", "groups": groups},
+            "is_async": False,
+        }
+        conditional_callback_async_kwargs =  {
+            "name": conditional_callback_async_name,
+            "callback_kwargs": {
+                "callback": callback_async,
+                "get_method": "get_groups",
+                "get_kwargs": {"groups": get_groups, "defaults": (defaults or {})},
+                "put_method": "put_item_value_async",
+                "put_kwargs": {"name": io_name},
+            },
+            "condition_kwargs": {"method": "poll_groups_async", "groups": groups},
+            "is_async": True,
+        }
+
+        self.register_conditional_callback(**(conditional_callback_kwargs | (cc_kwargs or {})))
+        self.register_conditional_callback(**(conditional_callback_async_kwargs | (cc_async_kwargs or {})))
+
+        for name in self.iter_groups_io_keys(groups=groups):
+            if not isinstance(self.io_objects[name], IOCallbackWrapper):
+                self.register_io_callback(name, get=get, get_async=get_async, put=put, put_async=put_async)
+            self.callback_manager.map_conditionals_to_scheduler(name, (conditional_callback_async_name, ))
+
+    def create_ios_to_io_callback(
+        self,
+        ios: str | Iterable[str],
+        io_name: str,
+        callback: Callable | None = None,
+        callback_async: Callable | None = None,
+        cc_kwargs: dict[str, Any] | None = None,
+        cc_async_kwargs: dict[str, Any] | None = None,
+        defaults: dict[str, Any] | None = None,
+        get: str | None = None,
+        get_async: str | None = None,
+        put: str | None = "after_put",
+        put_async: str | None = "after_put_async",
+        *,
+        get_ios: str | Iterable[str] | None = None,
+    )-> None:
+        if get_ios is None:
+            get_ios = ios
+
+        if callback is None:
+            callback = self.inputs_to_output
+
+        if callback_async is None:
+            callback_async = self.inputs_to_output_async
+
+        conditional_callback_name = f"{str(ios)}_to_{io_name}"
+        conditional_callback_async_name = f"{str(ios)}_to_{io_name}_async"
+        conditional_callback_kwargs = {
+            "name": conditional_callback_name,
+            "callback_kwargs": {
+                "callback": callback,
+                "get_method": "get_items",
+                "get_kwargs": {"names": get_ios, "defaults": (defaults or {})},
+                "put_method": "put_item_value",
+                "put_kwargs": {"name": io_name},
+            },
+            "condition_kwargs": {"method": "poll_all_ios", "names": ios},
+            "is_async": False,
+        }
+        conditional_callback_async_kwargs =  {
+            "name": conditional_callback_async_name,
+            "callback_kwargs": {
+                "callback": callback_async,
+                "get_method": "get_items",
+                "get_kwargs": {"names": get_ios, "defaults": (defaults or {})},
+                "put_method": "put_item_value_async",
+                "put_kwargs": {"name": io_name},
+            },
+            "condition_kwargs": {"method": "poll_all_ios_async", "names": ios},
+            "is_async": True,
+        }
+
+        self.register_conditional_callback(**(conditional_callback_kwargs | (cc_kwargs or {})))
+        self.register_conditional_callback(**(conditional_callback_async_kwargs | (cc_async_kwargs or {})))
+
+        if isinstance(ios, str):
+            ios = (ios,)
+
+        for name in ios:
+            if not isinstance(self.io_objects[name], IOCallbackWrapper):
+                self.register_io_callback(name, get=get, get_async=get_async, put=put, put_async=put_async)
+            self.callback_manager.map_conditionals_to_scheduler(name, (conditional_callback_async_name, ))
+
+    # Routing Callback Method and Functions
+    @staticmethod
+    def inputs_to_output(inputs: dict) -> dict:
+        return inputs
+
+    @staticmethod
+    async def inputs_to_output_async(inputs: dict) -> dict:
+        return inputs

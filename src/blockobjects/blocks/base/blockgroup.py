@@ -84,7 +84,7 @@ class BlockGroup(BaseBlock):
     }
 
     init_blocks: ClassVar[bool] = True
-    init_io_links: ClassVar[bool] = False
+    init_io_links: ClassVar[bool] = True
 
     # Attributes #
     sets_up_blocks: bool = True
@@ -482,15 +482,16 @@ class BlockGroup(BaseBlock):
 
     def finalize_io(self) -> None:
         self.correct_input_links()
-        self.set_input_callback()
+        self.set_input_link()
+        self.set_signal_links()
         self.inputs.start_listeners()
         self.outputs.start_listeners()
 
     async def finalize_io_async(self) -> None:
         if self.is_alive():
             await self.correct_input_links_async()
-        await self.set_input_callback_async()
-        await self.set_signal_callbacks_async()
+        await self.set_input_link_async()
+        await self.set_signal_links_async()
         await self.inputs.start_listeners_async()
         await self.outputs.start_listeners_async()
 
@@ -686,3 +687,11 @@ class BlockGroup(BaseBlock):
             await future
 
         self._clear_executing()
+
+    # Join
+    async def join_stop_task(self, timeout: float | None = None) -> None:
+        tasks = deque((create_task(super().join_stop_task(timeout)),))
+        for block in self.blocks.values():
+            tasks.append(create_task(block.join_stop_task(timeout)))
+
+        await wait_for(gather(*tasks), timeout)

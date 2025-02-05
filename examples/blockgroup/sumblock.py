@@ -26,18 +26,9 @@ class SumBlock(BaseBlock):
     default_output_signal_names: ClassVar[tuple[str, ...]] = ("done_flag",)
 
     # Attributes #
-    signal_callback_map = {"stop_callback": ("stop_signal", ("stop_flag",), {})}
+    signal_callback_map = {"stop_callback": {"method": "stop_signal", "signals":("stop_flag",)}}
 
     # Instance Methods #
-    # Signals
-    def stop_signal(self, stop_flag: bool) -> None:
-        if stop_flag:
-            self.stop()
-
-    async def stop_signal_async(self, stop_flag: bool) -> None:
-        if stop_flag:
-            await self.stop_async()
-
     # Evaluate
     def evaluate(self, data: np.ndarray, scale: float = 1.0, *args: Any, **kwargs: Any) -> Any:
         """Scales the given ndarray and returns some information from the array.

@@ -22,7 +22,7 @@ from ...process import BaseProcessingContext, AsyncContext, ManagerContext, DEFA
 
 # Local Packages #
 from ..base import IOMap, BaseIO, BaseIOMultiplexer, IOForwarder, IOWrapper
-from ..containers import IOQueue
+from ..containers import IOContextualQueue
 from ..routers import IOGroupType, IOGroupTypeMap
 from .baseiomanager import BaseIOManager
 
@@ -54,7 +54,7 @@ class ContextualIOManager(BaseIOManager):
         "default": DEFAULT_PROCESS_CONTEXT,
         "local": ManagerContext({"async": AsyncContext()}, "async"),
     }
-    default_io_type: type[BaseIO] = IOQueue
+    default_io_listen_container_type: type[BaseIO] = IOContextualQueue
 
     # Magic Methods #
     # Construction/Destruction
@@ -130,3 +130,14 @@ class ContextualIOManager(BaseIOManager):
         """
         kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
         return super().create_ios(names, group, groups, type_, *args, **kwargs)
+
+    # Listening
+    def create_io_listen_container(
+        self,
+        name: str,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
+        super().create_io_listen_container(name, type_, *args, **kwargs)

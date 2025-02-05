@@ -106,23 +106,26 @@ class ProcessArbitrator(ContextualObjectInterface):
             method_names -= cls._unexposed_ | cls.unexposed | wrapped_methods
             public_methods = set(n for n in method_names if n[0] != "_") if cls.public_exposed else set()
             check_methods = public_methods | (method_names & (cls.exposed | cls._exposed_))
+            local_methods = cls._local_methods_ | cls.local_methods
 
             for method_name in check_methods:
-                func = parent.__dict__.get(method_name, None)
-                if func is None:
-                    raise AttributeError(f"'{cls.__name__}' object has no method '{method_name}'")
-                if (
-                    not isinstance(func, staticmethod) and
-                    not isinstance(func, arbitratemethod) and
-                    not isinstance(getattr(func, "__wrapped__", func), arbitratemethod)
-                ):
-                    if method_name in (cls._local_methods_ | cls.local_methods):
-                        wrapper_method = "local_call"
-                    else:
-                        wrapper_method = arbitratemethod._wrapper_method
-                    d_method = arbitratemethod(func, wrapper_method=wrapper_method)
-                    setattr(cls, method_name, d_method)
-                    wrapped_methods.add(method_name)
+                match parent.__dict__.get(method_name, None):
+                    case staticmethod() | arbitratemethod():
+                        continue
+                    case None:
+                        raise AttributeError(f"'{cls.__name__}' object has no method '{method_name}'")
+                    case _ as func:
+                        match getattr(func, "__wrapped__", func):
+                            case arbitratemethod():
+                                continue
+                            case _:
+                                if method_name in local_methods:
+                                    wrapper_method = "local_call"
+                                else:
+                                    wrapper_method = arbitratemethod._wrapper_method
+                                d_method = arbitratemethod(func, wrapper_method=wrapper_method)
+                                setattr(cls, method_name, d_method)
+                                wrapped_methods.add(method_name)
 
         cls._checked_parents_.update(cls.__mro__)
 
@@ -139,11 +142,12 @@ class ProcessArbitrator(ContextualObjectInterface):
     # Construction/Destruction
     def __init__(
         self,
-        *,
+        *args: Any,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
         init: bool = True,
+        **kwargs: Any,
     ) -> None:
         # New Attributes #
 
@@ -152,7 +156,7 @@ class ProcessArbitrator(ContextualObjectInterface):
 
         # Object Construction #
         if init:
-            self.construct(start_server=start_server, proxy_context=proxy_context, _state=_state)
+            self.construct(*args, start_server=start_server, proxy_context=proxy_context, _state=_state, **kwargs)
 
     # Pickling
     def __getstate__(self) -> dict[str, Any]:
@@ -180,10 +184,11 @@ class ProcessArbitrator(ContextualObjectInterface):
     # Constructors/Destructors
     def construct(
         self,
-        *,
+        *args: Any,
         start_server: bool = False,
         proxy_context: BaseProcessingContext | None = None,
         _state: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Constructs this object.
 
@@ -196,7 +201,7 @@ class ProcessArbitrator(ContextualObjectInterface):
             self._proxy_context = proxy_context
 
         # Construct Parent
-        super().construct()
+        super().construct(*args, **kwargs)
 
         # Set State
         if _state:

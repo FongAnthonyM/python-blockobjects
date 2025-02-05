@@ -43,7 +43,7 @@ class IsEqualBlock(BaseBlock):
     default_input_signal_names: ClassVar[tuple[str, ...]] = ("stop_flag",)
 
     # Attributes #
-    signal_callback_map = {"stop_callback": ("stop_signal", ("stop_flag",), {})}
+    signal_callback_map = {"stop_callback": {"method": "stop_signal", "signals":("stop_flag",)}}
 
     # Magic Methods #
     # Construction/Destruction
@@ -83,15 +83,6 @@ class IsEqualBlock(BaseBlock):
 
         # Construct Parent #
         super().construct(*args, **kwargs)
-
-    # Signals
-    def stop_signal(self, stop_flag: bool) -> None:
-        if stop_flag:
-            self.stop()
-
-    async def stop_signal_async(self, stop_flag: bool) -> None:
-        if stop_flag:
-            await self.stop_async()
 
     # Is Equal
     def all(self, data: np.ndarray) -> bool:

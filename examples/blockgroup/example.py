@@ -6,9 +6,9 @@ An example of how to use the processing contexts.
 # Imports #
 # Standard Libraries #
 from asyncio import run
-from time import sleep
 
 # Third-Party Packages #
+from blockobjects.io import IOContextualQueue
 from blockobjects.process import DEFAULT_PROCESS_CONTEXT
 
 # Local Packages #
@@ -21,7 +21,10 @@ async def main():
     print("BlockGroup Example:")
 
     # Create Block Group
-    group = ExampleBlockGroup(will_proxy=False)
+    group = ExampleBlockGroup(will_proxy=True)
+    # Add Final Queue
+    group.outputs.create_io("group_result", group="required", type_=IOContextualQueue)
+
     # Start Block Group
     print("Starting Block Group")
     await group.start_async()
@@ -34,8 +37,8 @@ async def main():
     fourth_output = await group.outputs.get_all_async()
 
     # Stop Block Group
-    print("Stopping Block Group")
-    await group.blocks["checker"].join_execution_async()
+    print("Joining Block Group")
+    await group.join_stop_task()
 
     # Check Output
     print("Checking Output")

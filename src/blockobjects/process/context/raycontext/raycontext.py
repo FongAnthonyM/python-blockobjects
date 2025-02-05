@@ -30,6 +30,16 @@ from .proxies import RayProxy
 
 
 # Definitions #
+# Functions #
+def _setstate_(self, state: dict[str, Any]) -> None:
+    """Builds this object based on a dictionary of corresponding attributes.
+
+    Args:
+        state: The attributes to build this object from.
+    """
+    self.__dict__.update(state)
+
+
 # Classes #
 class RayContext(BaseProcessingContext):
     """A ProcessContext for Ray.

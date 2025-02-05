@@ -15,4 +15,5 @@ __email__ = __email__
 # Local Packages #
 from .iocontainer import IOContainer
 from .ioqueue import IOQueue
+from .iocontextualqueue import IOContextualQueue
 from .iosimplequeue import IOSimpleQueue

@@ -15,7 +15,6 @@ __email__ = __email__
 from asyncio import get_event_loop, Event, InvalidStateError, AbstractEventLoop, sleep
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
-import os
 from typing import Any
 
 # Third-Party Packages #
