@@ -1,8 +1,6 @@
 """ baseblock.py.py
 
 """
-from selectors import SelectSelector
-
 # Package Header #
 from ...header import *
 
@@ -52,22 +50,13 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     "evaluate" can be called directly which will run without using the Block IO. This is useful for processing data
     without using the Object IO architecture.
 
-    To use the Object IO architecture "execute" should be called. "execute" first gets the inputs from the inputs
-    manager and passes it to "evaluate" method. After evaluating, the output from "evaluate" is then put into the
-    outputs manager to be used later.
-
-    "execute" is also MethodMultiplexer, meaning that its call is arbitrated to different specified method. This gives
-    Block the flexibility to change the "execute" method's implementation during runtime.
-
     Class Attributes:
-        default_execute: The default name of the method to use for execution.
-        default_input_names: The default ordered tuple with the names of the inputs to an Block.
-        default_output_names: The default ordered tuple with the names of the outputs to an Block.
+        default_input_names: The default ordered tuple with the names of the inputs to a Block.
+        default_output_names: The default ordered tuple with the names of the outputs to a Block.
 
     Attributes:
         inputs: The inputs manager of the Block.
         outputs: The outputs manager of the Block.
-        execute: The method multiplexer which manages which execute method to run when called.
         input_names: The ordered tuple with the names of the inputs to an Block.
         _output_names: The ordered tuple with the names of the outputs to an Block.
 
@@ -150,17 +139,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     output_as_items: bool = False
     no_output_sentinel: Any = SentinelObject("no_output_sentinel")
 
-    input_method: str = "_produce"
-    input_method_async: str = "_produce_async"
-
-    get_input_method: str = "_get_input"
-    get_input_method_async: str = "_get_input_async"
-    get_input: MethodMultiplexer
-    get_input_async: MethodMultiplexer
-    put_output_method: str = "_put_output"
-    put_output_method_async: str = "_put_output_async"
-    put_output: MethodMultiplexer
-    put_output_async: MethodMultiplexer
+    input_callback_method: str = "_produce"
+    input_callback_method_async: str = "_produce_async"
 
     # Setup/Evaluate/Teardown
     sets_up: bool = True
@@ -265,11 +245,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self.evaluate_kwargs = self.evaluate_kwargs.copy()
         self.teardown_kwargs = self.teardown_kwargs.copy()
 
-        self.get_input = MethodMultiplexer(instance=self)
-        self.get_input_async = MethodMultiplexer(instance=self)
-        self.put_output = MethodMultiplexer(instance=self)
-        self.put_output_async = MethodMultiplexer(instance=self)
-
         self.futures = []
 
         # Parent Attributes #
@@ -367,9 +342,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Construct Parent #
         super().construct(*args, start_server=start_server, proxy_context=proxy_context, _state=_state, **kwargs)
 
-        if _state is not None:
-            self.set_execution_io()
-
     # State
     def is_executing(self) -> bool:
         """Checks if this object is currently running.
@@ -414,7 +386,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         """Clears the execution loop event."""
         self._loop_event = False
 
-    # IO
+    # IO Objects
     def create_io(
         self,
         input_names: str | Iterable[str] | None = None,
@@ -521,94 +493,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     def setup_io(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_io:
             self.build_io(*args, **kwargs)
-            self.set_execution_io()
             self.sets_up_io = False
 
     async def setup_io_async(self, *args: Any, **kwargs: Any) -> None:
         if self.sets_up_io:
             await self.build_io_async(*args, **kwargs)
-            self.set_execution_io()
             self.sets_up_io = False
-
-    def format_input(
-        self,
-        inputs: dict[str, Any],
-        *args: Any,
-        **kwargs: Any,
-    ) -> tuple[dict[str, Any] | None, dict[str, bytes] | None]:
-        """Formats the given inputs, separating inputs and their identifiers.
-
-        This method iterates through the provided inputs dictionary, checking each value. If a value is an instance of
-        `IdentifiedItem`, it extracts the identifier (ID) and the actual data, placing them into separate dictionaries.
-        The IDs are stored with the same keys as in the original inputs, facilitating correlation between IDs and data.
-        If a value is not an `IdentifiedItem`, it is added to the formatted inputs without modification.
-
-        Args:
-            inputs: A dictionary of inputs to be formatted, where keys are input names and values are the input data.
-            *args: Arguments which may be specified in an overriding method.
-            **kwargs: Keyword arguments which may be specified in an overriding method.
-
-        Returns:
-            A tuple containing two dictionaries:
-            - The first dictionary contains the formatted inputs with the same keys as the original inputs. If an input
-              was an `IdentifiedItem`, its data is extracted and placed here.
-            - The second dictionary contains the IDs extracted from any `IdentifiedItem` inputs, with the same keys as
-              the original inputs. If an input was not an `IdentifiedItem`, its key will not appear in this dictionary.
-        """
-        formatted_inputs = {}
-        ids = {}
-        for k, v in inputs.items():
-            if isinstance(v, IdentifiedItem):
-                ids[k] = v[0]
-                formatted_inputs[k] = v[1]
-            else:
-                formatted_inputs[k] = v
-
-        return formatted_inputs, ids
-
-    def _format_output(
-        self,
-        outputs: Any,
-        ids: tuple[bytes, ...] = (),
-        *args: Any,
-        **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        """Formats the outputs along with their identifiers into a dictionary for putting to outputs.
-
-        This method takes the outputs from the `evaluate` method and their corresponding identifiers, then formats them
-        into a dictionary where each key corresponds to an output name defined in `self.outputs.order`. If there is only
-        one output, it creates a single-entry dictionary with the output name as the key. For multiple outputs, it zips
-        the output names with the outputs, creating a dictionary of identified items.
-
-        Args:
-            outputs: The outputs to be formatted. Can be a single value or a tuple of values.
-            ids: A tuple of bytes representing the identifiers for each output. Defaults to an empty tuple.
-            *args: Arguments which may be specified in an overriding method.
-            **kwargs: Keyword arguments which may be specified in an overriding method.
-
-        Returns:
-            A dictionary where keys are output names and values are `IdentifiedItem` instances containing the output
-            data and its identifier. Returns `None` if no outputs are provided.
-        """
-        keys = self.output_order
-        if len(keys) == 1:
-            if self.output_as_items and isinstance(outputs, dict):
-                return {k: IdentifiedItem(ids, v) for k, v in outputs.items()}
-            else:
-                return {keys[0]: IdentifiedItem(ids, outputs)}
-        else:
-            return {k: IdentifiedItem(ids, v) for k, v in zip(keys, outputs)}
-
-    def format_output(
-        self,
-        outputs: Any,
-        ids: dict[str, Any] | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        new_ids = () if ids is None else tuple(set(chain.from_iterable(ids.values())))
-
-        return self._format_output(outputs, ids=new_ids, *args, **kwargs)
 
     def start_inputs(self) -> None:
         if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
@@ -637,22 +527,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             self.inputs.start_server()
         if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
             self.outputs.start_server()
-
-    def materialize_io(self) -> None:
-        if self.inputs.is_proxy():
-            self.inputs.update_server_io()
-            self.inputs.start_listeners()
-        if self.outputs.is_proxy():
-            self.outputs.update_server_io()
-            self.outputs.start_listeners()
-
-    async def materialize_io_async(self) -> None:
-        if self.inputs.is_proxy():
-            await self.inputs.update_server_io_async()
-            await self.inputs.start_listeners_async()
-        if self.outputs.is_proxy():
-            await self.outputs.update_server_io_async()
-            await self.outputs.start_listeners_async()
 
     def actualize_io(self) -> None:
         if self.sets_up_io:
@@ -732,10 +606,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     ) -> None:
         # Select Methods from given names
         if name is None:
-            name = self.input_method
+            name = self.input_callback_method
 
         if name_async is None:
-            name_async = self.input_method_async
+            name_async = self.input_callback_method_async
 
         io_wrapper = self.create_io_wrapper(put=name, put_async=name_async, as_proxy=as_proxy)
         self.inputs.set_io(self.input_link_name, io_wrapper)
@@ -748,10 +622,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     ) -> None:
         # Select Methods from given names
         if name is None:
-            name = self.input_method
+            name = self.input_callback_method
 
         if name_async is None:
-            name_async = self.input_method_async
+            name_async = self.input_callback_method_async
 
         io_wrapper = self.create_io_wrapper(put=name, put_async=name_async, as_proxy=as_proxy)
         await self.inputs.set_io_async(self.input_link_name, io_wrapper)
@@ -796,6 +670,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         if stop_flag:
             self.stop_as_task()
 
+    # Workflow Parts [Setup [Input -> Evaluate -> Output] Teardown]
     # Setup
     def setup(self, *args: Any, **kwargs: Any) -> None:
         """A method for setting up the object."""
@@ -806,6 +681,63 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             await self.setup(*args, **(self.setup_kwargs | kwargs))
         else:
             self.setup(*args, **(self.setup_kwargs | kwargs))
+
+    # Input
+    def format_input(
+        self,
+        inputs: dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any] | None, dict[str, bytes] | None]:
+        """Formats the given inputs, separating inputs and their identifiers.
+
+        This method iterates through the provided inputs dictionary, checking each value. If a value is an instance of
+        `IdentifiedItem`, it extracts the identifier (ID) and the actual data, placing them into separate dictionaries.
+        The IDs are stored with the same keys as in the original inputs, facilitating correlation between IDs and data.
+        If a value is not an `IdentifiedItem`, it is added to the formatted inputs without modification.
+
+        Args:
+            inputs: A dictionary of inputs to be formatted, where keys are input names and values are the input data.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+
+        Returns:
+            A tuple containing two dictionaries:
+            - The first dictionary contains the formatted inputs with the same keys as the original inputs. If an input
+              was an `IdentifiedItem`, its data is extracted and placed here.
+            - The second dictionary contains the IDs extracted from any `IdentifiedItem` inputs, with the same keys as
+              the original inputs. If an input was not an `IdentifiedItem`, its key will not appear in this dictionary.
+        """
+        formatted_inputs = {}
+        ids = {}
+        for k, v in inputs.items():
+            if isinstance(v, IdentifiedItem):
+                ids[k] = v[0]
+                formatted_inputs[k] = v[1]
+            else:
+                formatted_inputs[k] = v
+
+        return formatted_inputs, ids
+
+    def get_input(
+        self,
+        *args: Any,
+        format_: bool = True,
+        format_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        inputs = self.inputs.get(*args, **kwargs)
+        return self.format_input(inputs, **(format_kwargs or {})) if format_ else inputs
+
+    async def get_input_async(
+        self,
+        *args: Any,
+        format_: bool = True,
+        format_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        inputs = await self.inputs.get_async(*args, **kwargs)
+        return self.format_input(inputs, **(format_kwargs or {})) if format_ else inputs
 
     # Evaluate
     @abstractmethod
@@ -837,131 +769,210 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         else:
             return self.evaluate(*args, **kwargs)
 
-    # Set Execution
-    def set_execution_io(self) -> None:
-        match len(self.inputs.io_groups["required"]):
-            case 0:
-                self.get_input.select("_get_no_input")
-                self.get_input_async.select("_get_no_input_async")
-            case _:
-                self.get_input.select(self.get_input_method)
-                self.get_input_async.select(self.get_input_method_async)
+    # Output
+    def _format_output(
+        self,
+        outputs: Any,
+        ids: tuple[bytes, ...] = (),
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Formats the outputs along with their identifiers into a dictionary for putting to outputs.
 
-        match len(self.outputs.io_groups["required"]):
-            case 0:
-                self.put_output.select("_put_no_output")
-                self.put_output_async.select("_put_no_output_async")
-            case _:
-                self.put_output.select(self.put_output_method)
-                self.put_output_async.select(self.put_output_method_async)
+        This method takes the outputs from the `evaluate` method and their corresponding identifiers, then formats them
+        into a dictionary where each key corresponds to an output name defined in `self.outputs.order`. If there is only
+        one output, it creates a single-entry dictionary with the output name as the key. For multiple outputs, it zips
+        the output names with the outputs, creating a dictionary of identified items.
 
-    def set_execution_input_only(self) -> None:
-        match len(self.inputs):
-            case 0:
-                self.get_input.select("_get_no_input")
-                self.get_input_async.select("_get_no_input_async")
-            case _:
-                self.get_input.select(self.get_input_method)
-                self.get_input_async.select(self.get_input_method_async)
+        Args:
+            outputs: The outputs to be formatted. Can be a single value or a tuple of values.
+            ids: A tuple of bytes representing the identifiers for each output. Defaults to an empty tuple.
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
 
-        self.put_output.select("_put_no_output")
-        self.put_output_async.select("_put_no_output_async")
+        Returns:
+            A dictionary where keys are output names and values are `IdentifiedItem` instances containing the output
+            data and its identifier. Returns `None` if no outputs are provided.
+        """
+        keys = self.output_order
+        if len(keys) == 1:
+            if self.output_as_items and isinstance(outputs, dict):
+                return {k: IdentifiedItem(ids, v) for k, v in outputs.items()}
+            else:
+                return {keys[0]: IdentifiedItem(ids, outputs)}
+        else:
+            return {k: IdentifiedItem(ids, v) for k, v in zip(keys, outputs)}
 
-    def set_execution_output_only(self) -> None:
-        self.get_input.select("_get_no_input")
-        self.get_input_async.select("_get_no_input_async")
+    def format_output(
+        self,
+        outputs: Any,
+        ids: dict[str, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        new_ids = () if ids is None else tuple(set(chain.from_iterable(ids.values())))
 
-        match len(self.outputs.order):
-            case 0:
-                self.put_output.select("_put_no_output")
-                self.put_output_async.select("_put_no_output_async")
-            case _:
-                self.put_output.select(self.put_output_method)
-                self.put_output_async.select(self.put_output_method_async)
+        return self._format_output(outputs, ids=new_ids, *args, **kwargs)
 
-    def set_execution_no_io(self) -> None:
-        self.get_input.select("_get_no_input")
-        self.get_input_async.select("_get_no_input_async")
+    def put_output(
+        self,
+        output: Any,
+        *args: Any,
+        format_: bool = True,
+        format_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if format_:
+            output = self.format_output(output, **(format_kwargs or {}))
+        self.outputs.put_items(output, *args, **kwargs)
 
-        self.put_output.select("_put_no_output")
-        self.put_output_async.select("_put_no_output_async")
+    async def put_output_async(
+        self,
+        output: Any,
+        *args: Any,
+        format_: bool = True,
+        format_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if format_:
+            output = self.format_output(output, **(format_kwargs or {}))
+        await self.outputs.put_items_async(output, *args, **kwargs)
 
-    # Get Input
-    def _get_no_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {}
+    # Teardown
+    def teardown(self, *args: Any, **kwargs: Any) -> None:
+        """A method for tearing down the object."""
 
-    async def _get_no_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {}
+    async def teardown_async(self, *args: Any, **kwargs: Any) -> None:
+        """Asynchronously runs the teardown."""
+        if iscoroutinefunction(self.teardown):
+            await self.teardown(*args, **(self.teardown_kwargs | kwargs))
+        else:
+            self.teardown(*args, **(self.teardown_kwargs | kwargs))
 
-    def _get_input(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self.inputs.get(*args, **kwargs)
-
-    async def _get_input_async(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return await self.inputs.get_async(*args, **kwargs)
-
-    # Put Output
-    def _put_no_output(self, *args: Any, **kwargs: Any) -> None:
-        """Executes no output."""
-
-    async def _put_no_output_async(self, *args: Any, **kwargs: Any) -> None:
-        """Asynchronously executes no output."""
-
-    def _put_output(self, output: dict[str, Any], **kwargs: Any) -> None:
-        self.outputs.put_items(output, **kwargs)
-
-    async def _put_output_async(self, output: dict[str, Any], **kwargs: Any) -> None:
-        await self.outputs.put_items_async(output, **kwargs)
-
-    # Execute
-    def _execute(self, *args: Any, **kwargs: Any) -> None:
-        """Executes by getting the inputs, evaluating, and putting to the outputs.
+    # Workflows
+    # Consume [Input -> Evaluate]
+    def _consume(self, *args: Any, **kwargs: Any) -> None:
+        """Consumes by getting the inputs and evaluating.
 
         Args:
             *args: Arguments which may be specified in an overriding method.
             **kwargs: Keyword arguments which may be specified in an overriding method.
         """
         # Get input from input manager and format it
-        inputs, ids = self.format_input(self.get_input())
+        inputs, ids = self.get_input()
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
-        if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
-            # If outputs are valid, format and send them to the output manager
-            self.put_output(self.format_output(outputs, ids))
+        self.evaluate(input_ids=ids, **inputs)
 
         # Stop executing
         if self.stop_flag:
-            self.stop(await_production=False)
+            self.stop_as_task(await_production=False)
 
-    def execute(self, *args: Any, **kwargs: Any) -> None:
+    def consume(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            self._execute(*args, **kwargs)
+            self._consume(*args, **kwargs)
 
-    async def _execute_async(self, *args: Any, **kwargs: Any) -> None:
+    async def _consume_async(self, *args: Any, **kwargs: Any) -> None:
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
-        inputs, ids = self.format_input(await self.get_input_async())
-        if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
-            await self.put_output_async(self.format_output(outputs, ids))
+        inputs, ids = await create_task(self.get_input_async())
+        await evaluate_method(input_ids=ids, **inputs)
 
         if self.stop_flag:
-            await self.stop_async(await_production=False)
+            self.stop_as_task(await_production=False)
 
-    async def execute_async(self, *args: Any, **kwargs: Any) -> None:
+    async def consume_async(self, *args: Any, **kwargs: Any) -> None:
         with self._executing_context_manager():
-            await self._execute_async(*args, **kwargs)
+            await self._consume_async(*args, **kwargs)
 
-    # Execute Loop
-    def _execution_loop(self, *args: Any, **kwargs: Any) -> None:
+    # Consumption Loop
+    def _consumption_loop(self, *args: Any, **kwargs: Any) -> None:
         while self._loop_event:
             # Get Inputs
-            inputs, ids = self.format_input(self.get_input())
+            inputs, ids = self.get_input()
+            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
+                self._loop_event = False
+                continue
+
+            # Evaluate and Output
+            self.evaluate(input_ids=ids, **inputs)
+
+            if self.stop_flag:
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
+
+    async def _consumption_loop_async(self, *args: Any, **kwargs: Any) -> None:
+        """An async loop that consumes evaluate consecutively until an event stops it."""
+        # Get the correct method
+        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+
+        # Loop the evaluation
+        while self._loop_event:
+            # Get Inputs
+            inputs, ids = await create_task(self.get_input_async())
+            if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
+                self._loop_event = False
+                continue
+
+            # Evaluate and Output
+            await evaluate_method(input_ids=ids, **inputs)
+
+            if self.stop_flag:
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
+
+    # Transact [Input -> Evaluate -> Output]
+    def _transact(self, *args: Any, **kwargs: Any) -> None:
+        """Transacts by getting the inputs, evaluating, and putting to the outputs.
+
+        Args:
+            *args: Arguments which may be specified in an overriding method.
+            **kwargs: Keyword arguments which may be specified in an overriding method.
+        """
+        # Get input from input manager and format it
+        inputs, ids = self.get_input()
+        # Process inputs through the evaluate method and check if the outputs are not the sentinel value
+        if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            # If outputs are valid, format and send them to the output manager
+            self.put_output(outputs, format_kwargs={"ids": ids})
+
+        # Stop executing
+        if self.stop_flag:
+            self.stop_as_task(await_production=False)
+
+    def transact(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            self._transact(*args, **kwargs)
+
+    async def _transact_async(self, *args: Any, **kwargs: Any) -> None:
+        evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+        inputs, ids = await create_task(self.get_input_async())
+        if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
+            await self.put_output_async(outputs, format_kwargs={"ids": ids})
+
+        if self.stop_flag:
+            self.stop_as_task(await_production=False)
+
+    async def transact_async(self, *args: Any, **kwargs: Any) -> None:
+        with self._executing_context_manager():
+            await self._transact_async(*args, **kwargs)
+
+    # Transaction Loop
+    def _transaction_loop(self, *args: Any, **kwargs: Any) -> None:
+        while self._loop_event:
+            # Get Inputs
+            inputs, ids = self.get_input()
             if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
                 self._loop_event = False
                 continue
 
             # Evaluate and Output
             if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
-                self.put_output(self.format_output(outputs, ids))
+                self.put_output(outputs, format_kwargs={"ids": ids})
 
-    async def _execution_loop_async(self, *args: Any, **kwargs: Any) -> None:
+            if self.stop_flag:
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
+
+    async def _transaction_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively until an event stops it."""
         # Get the correct method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
@@ -969,16 +980,20 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Loop the evaluation
         while self._loop_event:
             # Get Inputs
-            inputs, ids = self.format_input(await create_task(self.get_input_async()))
+            inputs, ids = await create_task(self.get_input_async())
             if any((self.inputs.break_sentinel == inputs[n]) for n in self.inputs.io_groups["required"].keys()):
                 self._loop_event = False
                 continue
 
             # Evaluate and Output
             if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
-                await create_task(self.put_output_async(self.format_output(outputs, ids)))
+                await create_task(self.put_output_async(outputs, format_kwargs={"ids": ids}))
 
-    # Produce
+            if self.stop_flag:
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
+
+    # Produce [Evaluate -> Output]
     def _produce(self, inputs: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Produces by formatting any given inputs, evaluating, and putting to the outputs.
 
@@ -992,7 +1007,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
         if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
             # If outputs are valid, format and send them to the output manager
-            self.put_output(self.format_output(outputs, ids))
+            self.put_output(outputs, format_kwargs={"ids": ids})
 
         if self.stop_flag:
             self.stop_as_task(await_production=False)
@@ -1005,7 +1020,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
         if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
-            await create_task(self.put_output_async(self.format_output(outputs, ids)))
+            await create_task(self.put_output_async(outputs, format_kwargs={"ids": ids}))
 
         if self.stop_flag:
             self.stop_as_task(await_production=False)
@@ -1019,10 +1034,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         while self._loop_event:
             # Evaluate and Output
             if (outputs := self.evaluate(*args, **kwargs)) is not self.no_output_sentinel:
-                self.put_output(self.format_output(outputs))
+                self.put_output(outputs)
 
             if self.stop_flag:
-                self.stop(await_production=False)
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
 
     async def _production_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively and outputs until an event stops it."""
@@ -1033,22 +1049,13 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         while self._loop_event:
             # Evaluate and Output
             if (outputs := await create_task(evaluate_method(*args, **kwargs))) is not self.no_output_sentinel:
-                await create_task(self.put_output_async(self.format_output(outputs)))
+                await create_task(self.put_output_async(outputs))
 
             if self.stop_flag:
-                await self.stop_async(await_production=False)
+                self.stop_as_task(await_production=False)
+                self._loop_event = False
 
-    # Teardown
-    def teardown(self, *args: Any, **kwargs: Any) -> None:
-        """A method for tearing down the object."""
-
-    async def teardown_async(self, *args: Any, **kwargs: Any) -> None:
-        """Asynchronously runs the teardown."""
-        if iscoroutinefunction(self.teardown):
-            await self.teardown(*args, **(self.teardown_kwargs | kwargs))
-        else:
-            self.teardown(*args, **(self.teardown_kwargs | kwargs))
-
+    # Starting and Running
     # Run Block Once
     async def _run(
         self,
@@ -1056,11 +1063,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Runs a single execution of the block.
+        """Runs a single transaction of the block.
 
         Args:
             s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
+            e_kwargs: The keyword arguments for block evaluation.
             t_kwargs: The keyword arguments for block teardown.
         """
         # Flag On
@@ -1069,8 +1076,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             if self.sets_up:
                 await self.setup_async(**(s_kwargs or {}))
 
-            # Run one Execution
-            await self._execute_async(**(e_kwargs or {}))
+            # Run one Transaction
+            await self._transact_async(**(e_kwargs or {}))
 
             # Optionally Teardown
             if self.tears_down:
@@ -1086,11 +1093,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Runs a single execution of the block using the async event loop.
+        """Runs a single transaction of the block using the async event loop.
 
         Args:
             s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
+            e_kwargs: The keyword arguments for block evaluation.
             t_kwargs: The keyword arguments for block teardown.
         """
         run(self._run(s_kwargs, e_kwargs, t_kwargs))
@@ -1102,12 +1109,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Runs a single execution of the block, arbitrating to another process if selected.
+        """Runs a single transaction of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
             s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
+            e_kwargs: The keyword arguments for block evaluation.
             t_kwargs: The keyword arguments for block teardown.
         """
         # Raise Error if the task is already running.
@@ -1131,12 +1138,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         e_kwargs: dict[str, Any] | None = None,
         t_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Asynchronously runs a single execution of the block, arbitrating to another process if selected.
+        """Asynchronously runs a single transaction of the block, arbitrating to another process if selected.
 
         Args:
             as_proxy: Determines if this object should run in a separate process.
             s_kwargs: The keyword arguments for block setup.
-            e_kwargs: The keyword arguments for block execution.
+            e_kwargs: The keyword arguments for block evaluation.
             t_kwargs: The keyword arguments for block teardown.
         """
         # Raise Error if the task is already running.

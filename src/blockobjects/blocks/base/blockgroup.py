@@ -48,14 +48,12 @@ class BlockGroup(BaseBlock):
     could also be defined outside the BlockGroup class and be added into the OrderableDict "block" directly.
 
     Class Attributes:
-        default_execute: The default name of the method to use for execution.
         default_input_names: The default ordered tuple with the names of the inputs to an Block.
         default_output_names: The default ordered tuple with the names of the outputs to an Block.
 
     Attributes:
         inputs: The inputs manager of the Block.
         outputs: The outputs manager of the Block.
-        execute: The method multiplexer which manages which execute method to run when called.
         input_names: The ordered tuple with the names of the inputs to an Block.
         _output_names: The ordered tuple with the names of the outputs to an Block.
         blocks: The ordered dictionary of Block to execute and the order to execute them in.
@@ -544,41 +542,7 @@ class BlockGroup(BaseBlock):
         Returns:
             The result of the evaluation.
         """
-        self.inputs.put_all(**kwargs)
-        outputs = self.outputs.get_all()
-        match len(outputs):
-            case 0:
-                return None
-            case 1:
-                return outputs[0]
-            case _:
-                return outputs
-
-    async def evaluate_async(self, *args: Any, **kwargs: Any) -> Any:
-        """An abstract method which is the evaluation of this object.
-
-        Args:
-            *args: The arguments for evaluating.
-            **kwargs: The keyword arguments for evaluating.
-
-        Returns:
-            The result of the evaluation.
-        """
-        await self.inputs.put_all_async(**kwargs)
-        outputs = await self.outputs.get_all_async()
-        match len(outputs):
-            case 0:
-                return None
-            case 1:
-                return outputs[0]
-            case _:
-                return outputs
-
-    # Execute
-    def execute_all(self) -> None:
-        """Executes all operation within this operation group."""
-        for block in self.blocks.values():
-            block.full_execute()
+        raise NotImplementedError
 
     # Start
     async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
@@ -670,7 +634,7 @@ class BlockGroup(BaseBlock):
 
     # Stop Block Execution
     async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
-        """Starts the continuous execution of the block.
+        """Stops the continuous execution of the block.
 
         Args:
             t_kwargs: The keyword arguments for block teardown.

@@ -15,3 +15,4 @@ __email__ = __email__
 # Local Packages #
 from .baseblock import BaseBlock
 from .blockgroup import BlockGroup
+from .baseproducerblock import BaseProducerBlock

@@ -100,6 +100,7 @@ class RNGBlock(BaseBlock):
             self.stop_flag = True
             return self.no_output_sentinel
         else:
+            print("rng")
             self.n_evaluations += 1
             return np.random.rand(*self.shape) * self.scale - self.shift
 

@@ -42,6 +42,7 @@ class SumBlock(BaseBlock):
         Returns:
             The sum, min, and max of the scaled array.
         """
+        print("sum")
         scaled_data = data * scale
 
         return scaled_data.sum(), scaled_data.min(), scaled_data.max()

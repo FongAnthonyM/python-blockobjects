@@ -93,7 +93,6 @@ class ExampleBlockGroup(BlockGroup):
         generator_signal_router.link_forward("sum_2", sum_2.input_signals, "stop_flag")
 
         # Create an ADD signal gate for sum done stop flag
-        io_groups = {"inputs": ("sum_1", "sum_2"), "outputs": ("stop_flag",)}
         sum_signal_router = IORouter(name="sum_signal_gate")
         sum_signal_router.create_ios(("sum_1", "sum_2"), group="inputs", type_=IOQueue)
         sum_signal_router.create_io("stop_flag", group="outputs")
