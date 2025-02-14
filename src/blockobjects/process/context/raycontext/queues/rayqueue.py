@@ -85,6 +85,29 @@ class RayQueue(QueueInterface):
         """
         return get(self._remote_queue.full.remote())
 
+    # Size
+    def set_maxsize(self, maxsize: int) -> None:
+        """Sets the maximum size allowed for the queue.
+
+        This method sets the maximum size of the queue by invoking the underlying set_maxsize method. This value
+        determines the total number of elements the queue can hold.
+
+        Args:
+            maxsize: The maximum size to set for the queue.
+        """
+        return get(self._remote_queue.set_maxsize.remote(maxsize))
+
+    def get_maxsize(self) -> int:
+        """Gets the maximum size of the queue.
+
+        This method returns the maximum number of items that the queue can hold. It is useful for determining
+        capacity constraints of the queue in a specific scenario.
+
+        Returns:
+            int: The maximum size of the queue.
+        """
+        return get(self._remote_queue.get_maxsize.remote())
+
     # Get
     def get(
         self,

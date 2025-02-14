@@ -111,6 +111,29 @@ class ContextualQueue(BaseContextualObject, QueueInterface):
         """Returns True if the queue has something in it, False otherwise."""
         return self.queue.poll()
 
+    # Size
+    def set_maxsize(self, maxsize: int) -> None:
+        """Sets the maximum size allowed for the queue.
+
+        This method sets the maximum size of the queue by invoking the underlying set_maxsize method. This value
+        determines the total number of elements the queue can hold.
+
+        Args:
+            maxsize: The maximum size to set for the queue.
+        """
+        self.queue.set_maxsize(maxsize)
+
+    def get_maxsize(self) -> int:
+        """Gets the maximum size of the queue.
+
+        This method returns the maximum number of items that the queue can hold. It is useful for determining
+        capacity constraints of the queue in a specific scenario.
+
+        Returns:
+            int: The maximum size of the queue.
+        """
+        return self.queue.get_maxsize()
+
     # Get
     def get(
         self,

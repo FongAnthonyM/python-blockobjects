@@ -72,7 +72,7 @@ class ExampleBlockGroup(BlockGroup):
 
         # Inner Block IO
         # Route the RNG output to inputs of both the sum block.
-        generator_router = IORouter(names=("sum_1", "sum_2"), name="generator_splitter")  # Create a router to route the output to multiple inputs.
+        generator_router = IORouter(io_=("sum_1", "sum_2"), name="generator_splitter")  # Create a router to route the output to multiple inputs.
         generator.outputs.encapsulate_io(generator_router)
         generator.outputs.link_forward("out_array", generator_router)  # Link the output to the router.
         generator_router.link_forward("sum_1", sum_1.inputs, "data")  # Link the router to the sum block.

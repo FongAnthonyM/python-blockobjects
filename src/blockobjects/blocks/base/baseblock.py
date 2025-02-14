@@ -479,12 +479,12 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             router.create_ios_to_io_callback(**self.format_signal_callback(name, **entry))
 
     def build_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Builds the IO with the default routing.
+        """Builds the IO with the default settings and routing.
 
         Args:
-            *args: The arguments for creating the io.
-            override: Determines if the io will be overridden.
-            **kwargs: The keyword arguments for creating the inner blockgroup.
+            *args: Positional arguments for creating the IO.
+            override: Determines if the IO will be overridden.
+            **kwargs: Keyword arguments for creating the IO.
         """
 
     async def build_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
