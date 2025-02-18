@@ -108,7 +108,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     default_output_names: ClassVar[tuple[str, ...]] = ()
     default_output_signal_names: ClassVar[tuple[str, ...]] = ()
 
-    init_setup: ClassVar[bool] = True
+    init_setup: ClassVar[bool] = False
 
     # Attributes #
     # Backend
@@ -773,7 +773,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     def _format_output(
         self,
         outputs: Any,
-        ids: tuple[bytes, ...] = (),
+        ids: dict[str, tuple[bytes, ...]] | tuple[bytes] = (),
+        map_outputs: bool | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
@@ -795,24 +796,27 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             data and its identifier. Returns `None` if no outputs are provided.
         """
         keys = self.output_order
-        if len(keys) == 1:
-            if self.output_as_items and isinstance(outputs, dict):
-                return {k: IdentifiedItem(ids, v) for k, v in outputs.items()}
-            else:
-                return {keys[0]: IdentifiedItem(ids, outputs)}
+        if map_outputs or (map_outputs is None and self.output_as_items):
+            output_iter = outputs.items()
+        elif len(keys) == 1:
+            output_iter = ((keys[0], outputs),)
         else:
-            return {k: IdentifiedItem(ids, v) for k, v in zip(keys, outputs)}
+            output_iter = zip(keys, outputs)
+
+        if not isinstance(ids, dict):
+            ids = {k: ids for k in keys}
+
+        return {k: IdentifiedItem(ids.get(k, ()), v) for k, v in output_iter}
 
     def format_output(
         self,
         outputs: Any,
-        ids: dict[str, Any] | None = None,
+        ids: dict[str, tuple[bytes, ...]] | tuple[bytes] = (),
+        map_outputs: bool | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        new_ids = () if ids is None else tuple(set(chain.from_iterable(ids.values())))
-
-        return self._format_output(outputs, ids=new_ids, *args, **kwargs)
+        return self._format_output(outputs, ids=ids, map_outputs=map_outputs, *args, **kwargs)
 
     def put_output(
         self,
@@ -823,7 +827,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         **kwargs: Any,
     ) -> None:
         if format_:
-            output = self.format_output(output, **(format_kwargs or {}))
+            f_kwargs = {} if previous_ids is None else {"ids": tuple(set(chain.from_iterable(previous_ids.values())))}
+            output = self.format_output(output, **(f_kwargs | (format_kwargs or {})))
         self.outputs.put_items(output, *args, **kwargs)
 
     async def put_output_async(
@@ -831,11 +836,13 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         output: Any,
         *args: Any,
         format_: bool = True,
+        previous_ids: dict[str, tuple[bytes, ...]] | None = None,
         format_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         if format_:
-            output = self.format_output(output, **(format_kwargs or {}))
+            f_kwargs = {} if previous_ids is None else {"ids": tuple(set(chain.from_iterable(previous_ids.values())))}
+            output = self.format_output(output, **(f_kwargs | (format_kwargs or {})))
         await self.outputs.put_items_async(output, *args, **kwargs)
 
     # Teardown
@@ -932,7 +939,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
         if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
             # If outputs are valid, format and send them to the output manager
-            self.put_output(outputs, format_kwargs={"ids": ids})
+            self.put_output(outputs, previous_ids=ids)
 
         # Stop executing
         if self.stop_flag:
@@ -946,7 +953,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
         inputs, ids = await create_task(self.get_input_async())
         if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
-            await self.put_output_async(outputs, format_kwargs={"ids": ids})
+            await self.put_output_async(outputs, previous_ids=ids)
 
         if self.stop_flag:
             self.stop_as_task(await_production=False)
@@ -966,7 +973,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
             # Evaluate and Output
             if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
-                self.put_output(outputs, format_kwargs={"ids": ids})
+                self.put_output(outputs, previous_ids=ids)
 
             if self.stop_flag:
                 self.stop_as_task(await_production=False)
@@ -987,7 +994,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
             # Evaluate and Output
             if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
-                await create_task(self.put_output_async(outputs, format_kwargs={"ids": ids}))
+                await create_task(self.put_output_async(outputs, previous_ids=ids))
 
             if self.stop_flag:
                 self.stop_as_task(await_production=False)
@@ -1007,7 +1014,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
         if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
             # If outputs are valid, format and send them to the output manager
-            self.put_output(outputs, format_kwargs={"ids": ids})
+            self.put_output(outputs, previous_ids=ids)
 
         if self.stop_flag:
             self.stop_as_task(await_production=False)
@@ -1020,7 +1027,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
         if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
-            await create_task(self.put_output_async(outputs, format_kwargs={"ids": ids}))
+            await create_task(self.put_output_async(outputs, previous_ids=ids))
 
         if self.stop_flag:
             self.stop_as_task(await_production=False)

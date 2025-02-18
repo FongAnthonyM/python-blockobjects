@@ -39,8 +39,8 @@ class CycleIORouter(IORouter):
     # Attributes #
     _get_cycle_order: tuple[str, ...] = ()
     _put_cycle_order: tuple[str, ...] = ()
-    _get_cycle_iter: cycle[str]
-    _put_cycle_iter: cycle[str]
+    _get_cycle_iter: cycle
+    _put_cycle_iter: cycle
 
     # Properties #
     @property

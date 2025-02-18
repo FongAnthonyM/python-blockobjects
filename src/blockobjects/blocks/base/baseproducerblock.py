@@ -36,12 +36,14 @@ class BaseProducerBlock(BaseBlock):
     def format_output(
         self,
         outputs: Any,
-        ids: dict[str, Any] | None = None,
+        ids: dict[str, tuple[bytes, ...]] | tuple[bytes] | None = None,
+        map_outputs: bool | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        new_ids = (uuid4().bytes,) if ids is None else tuple(set(chain.from_iterable(ids.values())))
-        return self._format_output(outputs, ids=new_ids, *args, **kwargs)
+        if ids is None:
+            ids = (uuid4().bytes,)
+        return self._format_output(outputs, ids=ids, map_outputs=map_outputs, *args, **kwargs)
 
     # Evaluate
     @abstractmethod

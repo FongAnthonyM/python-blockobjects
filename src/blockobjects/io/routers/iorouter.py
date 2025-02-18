@@ -1174,6 +1174,11 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
             **kwargs: Additional keyword arguments passed to the `create_link` method of the `other` object
                       if a destination is specified.
         """
+        if self.io_objects.get(source, None) is None:
+            raise KeyError(f"Source IO: {source} not found in {self.name}")
+        if destination is not None and other.io_objects.get(destination, None) is None:
+            raise KeyError(f"Destination IO: {destination} not found in {other.name}")
+
         key = (self.id_number, source, other.id_number, destination)
         self.links_to[key] = other
         other.links_from[key] = self
@@ -1220,6 +1225,11 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         put_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        if other.io_objects.get(source, None) is None:
+            raise KeyError(f"Source IO: {source} not found in {other.name}")
+        if destination is not None and self.io_objects.get(destination, None) is None:
+            raise KeyError(f"Destination IO: {destination} not found in {self.name}")
+
         key = (other.id_number, source, self.id_number, destination)
         other.links_to[key] = self
         self.links_from[key] = other

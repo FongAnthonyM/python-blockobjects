@@ -32,16 +32,16 @@ class RegisterCycleIORouter(IORouter):
     """An IO object which cycles through its inputs and outputs."""
 
     # Class Attributes #
-    default_get: ClassVar[str] = "get_cycle"
-    default_get_async: ClassVar[str] = "get_cycle_async"
-    default_put: ClassVar[str] = "put_cycle"
-    default_put_async: ClassVar[str] = "put_cycle_async"
+    default_get: ClassVar[str] = "get_register_cycle"
+    default_get_async: ClassVar[str] = "get_register_cycle_async"
+    default_put: ClassVar[str] = "put_register_cycle"
+    default_put_async: ClassVar[str] = "put_register_cycle_async"
 
     # Attributes #
     _get_cycle_order: tuple[str, ...] = ()
     _put_cycle_order: tuple[str, ...] = ()
-    _get_cycle_iter: cycle[str]
-    _put_cycle_iter: cycle[str]
+    _get_cycle_iter: cycle
+    _put_cycle_iter: cycle
 
     get_register: MutableMapping[Hashable, Hashable]
     put_register: MutableMapping[Hashable, Hashable]
