@@ -122,6 +122,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     _is_executing: bool = False
     _executing_waiters: deque[Future]
     _name: str = ""
+    _has_setup: bool = True
+    _has_torndown: bool = True
 
     # IO
     sets_up_io: bool = True
@@ -143,9 +145,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     input_callback_method_async: str = "_produce_async"
 
     # Setup/Evaluate/Teardown
-    sets_up: bool = True
-    tears_down: bool = True
-
     setup_kwargs: dict[str, Any] = {}
     evaluate_kwargs: dict[str, Any] = {}
     teardown_kwargs: dict[str, Any] = {}
@@ -154,6 +153,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     _evaluate: MethodMultiplexer
     _teardown: MethodMultiplexer
 
+    _setup_task: Task | None = None
+    _evaluate_tasks: deque[Task]
+    _teardown_task: Task | None = None
     _production_task: Task | None = None
 
     stop_flag: bool = False
@@ -244,6 +246,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self.setup_kwargs = self.setup_kwargs.copy()
         self.evaluate_kwargs = self.evaluate_kwargs.copy()
         self.teardown_kwargs = self.teardown_kwargs.copy()
+
+        self._evaluate_tasks = deque()
 
         self.futures = []
 
@@ -682,6 +686,29 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         else:
             self.setup(*args, **(self.setup_kwargs | kwargs))
 
+    def ensure_setup(self, *args: Any, **kwargs: Any) -> None:
+        if not self._has_setup:
+            self.setup(*args, **kwargs)
+            self._has_setup = True
+
+    async def ensure_setup_async(self, *args: Any, **kwargs: Any) -> None:
+        if not self._has_setup:
+            if (setup_task := self._setup_task) is None:
+                self._setup_task = setup_task = create_task(self.setup_async(*args, **kwargs))
+                setup_task.add_done_callback(self._finish_setup_task)
+            await setup_task
+
+    def _finish_setup_task(self, task: Task) -> None:
+        self._has_setup = True
+        self._setup_task = None
+
+    async def join_setup_async(self) -> None:
+        if (setup_task := self._setup_task) is not None:
+            await setup_task
+
+    def reset_setup(self, *args: Any, **kwargs: Any) -> None:
+        self._has_setup = False
+
     # Input
     def format_input(
         self,
@@ -823,6 +850,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         output: Any,
         *args: Any,
         format_: bool = True,
+        previous_ids: dict[str, tuple[bytes, ...]] | None = None,
         format_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -856,6 +884,30 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         else:
             self.teardown(*args, **(self.teardown_kwargs | kwargs))
 
+    def ensure_teardown(self, *args: Any, **kwargs: Any) -> None:
+        if not self._has_torndown:
+            self.teardown(*args, **kwargs)
+            self._has_torndown = True
+
+    async def ensure_teardown_async(self, *args: Any, **kwargs: Any) -> None:
+        if not self._has_torndown:
+            if (teardown_task := self._teardown_task) is None:
+                self._teardown_task = teardown_task = create_task(self.teardown_async(*args, **kwargs))
+                teardown_task.add_done_callback(self._finish_teardown_task)
+            await teardown_task
+
+    def _finish_teardown_task(self, task: Task) -> None:
+        self._has_torndown = True
+        self._teardown_task = None
+
+    async def join_teardown_async(self) -> None:
+        if (teardown_task := self._teardown_task) is not None:
+            await teardown_task
+
+    def reset_teardown(self, *args: Any, **kwargs: Any) -> None:
+        """Resets the teardown method by removing the stored teardown method and re-setting it."""
+        self._has_torndown = False
+
     # Workflows
     # Consume [Input -> Evaluate]
     def _consume(self, *args: Any, **kwargs: Any) -> None:
@@ -865,6 +917,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             *args: Arguments which may be specified in an overriding method.
             **kwargs: Keyword arguments which may be specified in an overriding method.
         """
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         # Get input from input manager and format it
         inputs, ids = self.get_input()
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
@@ -879,6 +934,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             self._consume(*args, **kwargs)
 
     async def _consume_async(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        await self.ensure_setup_async()
+
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
         inputs, ids = await create_task(self.get_input_async())
         await evaluate_method(input_ids=ids, **inputs)
@@ -892,6 +950,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     # Consumption Loop
     def _consumption_loop(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         while self._loop_event:
             # Get Inputs
             inputs, ids = self.get_input()
@@ -908,6 +969,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     async def _consumption_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that consumes evaluate consecutively until an event stops it."""
+        # Ensure Setup is finished
+        if self._setup_task is not None:
+            await self._setup_task
+
         # Get the correct method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
 
@@ -934,6 +999,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             *args: Arguments which may be specified in an overriding method.
             **kwargs: Keyword arguments which may be specified in an overriding method.
         """
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         # Get input from input manager and format it
         inputs, ids = self.get_input()
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
@@ -950,11 +1018,18 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             self._transact(*args, **kwargs)
 
     async def _transact_async(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        await self.ensure_setup_async()
+
+        # Get evaluate method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
+
+        # Run Transact [Input -> Evaluate -> Output]
         inputs, ids = await create_task(self.get_input_async())
         if (outputs := await evaluate_method(input_ids=ids, **inputs)) is not self.no_output_sentinel:
             await self.put_output_async(outputs, previous_ids=ids)
 
+        # Create Stop task if flags is set
         if self.stop_flag:
             self.stop_as_task(await_production=False)
 
@@ -964,6 +1039,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     # Transaction Loop
     def _transaction_loop(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         while self._loop_event:
             # Get Inputs
             inputs, ids = self.get_input()
@@ -975,16 +1053,20 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             if (outputs := self.evaluate(input_ids=ids, **inputs)) is not self.no_output_sentinel:
                 self.put_output(outputs, previous_ids=ids)
 
+            # Create Stop task if flags is set
             if self.stop_flag:
                 self.stop_as_task(await_production=False)
                 self._loop_event = False
 
     async def _transaction_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively until an event stops it."""
-        # Get the correct method
+        # Ensure Setup is finished
+        await self.ensure_setup_async()
+
+        # Get evaluate method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
 
-        # Loop the evaluation
+        # Loop the Transaction [Input -> Evaluate -> Output]
         while self._loop_event:
             # Get Inputs
             inputs, ids = await create_task(self.get_input_async())
@@ -996,6 +1078,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
                 await create_task(self.put_output_async(outputs, previous_ids=ids))
 
+            # Create Stop task if flags is set
             if self.stop_flag:
                 self.stop_as_task(await_production=False)
                 self._loop_event = False
@@ -1009,6 +1092,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             *args: Arguments which may be specified in an overriding method.
             **kwargs: Keyword arguments which may be specified in an overriding method.
         """
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         # Format any given inputs
         inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
         # Process inputs through the evaluate method and check if the outputs are not the sentinel value
@@ -1024,6 +1110,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             self._produce(*args, **kwargs)
 
     async def _produce_async(self, inputs: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        await self.ensure_setup_async()
+
         inputs, ids = ({}, None) if inputs is None else self.format_input(inputs)
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
         if (outputs := await create_task(evaluate_method(input_ids=ids, **inputs))) is not self.no_output_sentinel:
@@ -1038,6 +1127,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     # Production Loop
     def _production_loop(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure Setup is finished
+        self.ensure_setup()
+
         while self._loop_event:
             # Evaluate and Output
             if (outputs := self.evaluate(*args, **kwargs)) is not self.no_output_sentinel:
@@ -1049,6 +1141,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     async def _production_loop_async(self, *args: Any, **kwargs: Any) -> None:
         """An async loop that executes evaluate consecutively and outputs until an event stops it."""
+        # Ensure Setup is finished
+        await self.ensure_setup_async()
+
         # Get the correct method
         evaluate_method = self.evaluate if iscoroutinefunction(self.evaluate) else self.evaluate_async
 
@@ -1058,6 +1153,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             if (outputs := await create_task(evaluate_method(*args, **kwargs))) is not self.no_output_sentinel:
                 await create_task(self.put_output_async(outputs))
 
+            # Create Stop task if flags is set
             if self.stop_flag:
                 self.stop_as_task(await_production=False)
                 self._loop_event = False
@@ -1080,15 +1176,13 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # Flag On
         with self._executing_context_manager():
             # Optionally Setup
-            if self.sets_up:
-                await self.setup_async(**(s_kwargs or {}))
+            await self.ensure_setup_async(**(s_kwargs or {}))
 
             # Run one Transaction
             await self._transact_async(**(e_kwargs or {}))
 
             # Optionally Teardown
-            if self.tears_down:
-                await self.teardown_async(**(t_kwargs or {}))
+            await self.ensure_teardown_async(**(t_kwargs or {}))
 
             # Wait for any remaining Futures
             for future in self.futures:
@@ -1175,8 +1269,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self._set_executing()
 
         # Optionally Setup
-        if self.sets_up:
-            await self.setup_async(**(s_kwargs or {}))
+        await self.ensure_setup_async(**(s_kwargs or {}))
 
         if self.will_produce:
             self.set_loop_event()
@@ -1278,8 +1371,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 self._production_task = None
 
         # Optionally Teardown
-        if self.tears_down:
-            await self.teardown_async(**(t_kwargs or {}))
+        await self.ensure_teardown_async(**(t_kwargs or {}))
 
         # Wait for any remaining Futures
         for future in self.futures:
