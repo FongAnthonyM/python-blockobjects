@@ -122,8 +122,8 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     _is_executing: bool = False
     _executing_waiters: deque[Future]
     _name: str = ""
-    _has_setup: bool = True
-    _has_torndown: bool = True
+    _has_setup: bool = False
+    _has_torndown: bool = False
 
     # IO
     sets_up_io: bool = True
@@ -341,7 +341,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             del _state["_will_proxy"]
 
         if _state is None and (init_setup or (init_setup is None and self.init_setup)):
-            self.setup(**({} if setup_kwargs is None else setup_kwargs))
+            self.ensure_setup(**({} if setup_kwargs is None else setup_kwargs))
 
         # Construct Parent #
         super().construct(*args, start_server=start_server, proxy_context=proxy_context, _state=_state, **kwargs)
@@ -1452,7 +1452,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         self.stop_task = None
 
     # Join Execution
-    async def join_stop_task(self, timeout: float | None = None) -> None:
+    async def join_stop_task_async(self, timeout: float | None = None) -> None:
         if self.stop_task is not None:
             await wait_for(self.stop_task, timeout)
 
@@ -1493,3 +1493,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                     # The future could be removed from self._executing_witers by a
                     # previous put_nowait call.
                     pass
+
+    async def join_async(self, timeout: float | None = None) -> None:
+        await self.join_execution_async(timeout)
+        await self.join_stop_task_async(timeout)

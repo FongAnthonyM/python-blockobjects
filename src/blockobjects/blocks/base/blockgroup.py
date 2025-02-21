@@ -554,8 +554,7 @@ class BlockGroup(BaseBlock):
         self._set_executing()
 
         # Optionally Setup
-        if self.sets_up:
-            await self.setup_async(**(s_kwargs or {}))
+        await self.ensure_setup_async(**(s_kwargs or {}))
 
         # Start Inner Blocks
         await gather(*(block.start_async() for block in self.blocks.values()))
@@ -643,8 +642,7 @@ class BlockGroup(BaseBlock):
         await gather(*(block.stop_async() for block in self.blocks.values()))
 
         # Optionally Teardown
-        if self.tears_down:
-            await self.teardown_async(**(t_kwargs or {}))
+        await self.ensure_teardown_async(**(t_kwargs or {}))
 
         # Wait for any remaining Futures
         for future in self.futures:
@@ -653,9 +651,16 @@ class BlockGroup(BaseBlock):
         self._clear_executing()
 
     # Join
-    async def join_stop_task(self, timeout: float | None = None) -> None:
+    async def join_stop_task_async(self, timeout: float | None = None) -> None:
         tasks = deque((create_task(super().join_stop_task(timeout)),))
         for block in self.blocks.values():
             tasks.append(create_task(block.join_stop_task(timeout)))
+
+        await wait_for(gather(*tasks), timeout)
+
+    async def join_async(self, timeout: float | None = None) -> None:
+        tasks = deque((create_task(super().join_async(timeout)),))
+        for block in self.blocks.values():
+            tasks.append(create_task(block.join_async(timeout)))
 
         await wait_for(gather(*tasks), timeout)
