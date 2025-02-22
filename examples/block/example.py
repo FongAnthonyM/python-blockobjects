@@ -11,6 +11,7 @@ from typing import Any
 
 # Third-Party Packages #
 from blockobjects import BaseBlock
+from blockobjects.io import IOContextualQueue
 from blockobjects.process import DEFAULT_PROCESS_CONTEXT
 
 
@@ -60,6 +61,9 @@ async def asyncio_example():
 
     # Create Block
     block = ExampleBlock(init_setup=False)
+    # Add Final Queues to store information
+    block.outputs.create_io("out_one", group="required", type_=IOContextualQueue)
+    block.outputs.create_io("out_two", group="required", type_=IOContextualQueue)
 
     # Start Block
     print("Start Block")
@@ -68,8 +72,8 @@ async def asyncio_example():
 
     # Put Inputs
     print(f"\nPID {getpid()}: putting inputs")
-    await block.inputs.put_callback_async("first", 2)
-    await block.inputs.put_callback_async("third", 3)
+    await block.inputs.put_item_async("first", 2)
+    await block.inputs.put_item_async("third", 3)
 
     # Get Outputs
     print(f"\nPID {getpid()}: getting outputs")
@@ -87,34 +91,37 @@ async def asyncio_example():
     print("")
 
 
-def multiprocessing_example():
+async def multiprocessing_example_async():
     # Print some information
     print("Multiprocessing Example:")
     print(f"The main PID is {getpid()} \n")
 
     # Set the processing context
-    DEFAULT_PROCESS_CONTEXT.select_context("ray")
+    DEFAULT_PROCESS_CONTEXT.select_context("multiprocessing")
 
     # Create Block
     block = ExampleBlock(will_proxy=True, init_setup=False)
+    # Add Final Queues to store information
+    block.outputs.create_io("out_one", group="required", type_=IOContextualQueue)
+    block.outputs.create_io("out_two", group="required", type_=IOContextualQueue)
 
     # Start Block
     print("Start Block")
     print(f"PID {getpid()}: start called")
-    block.start()
+    await block.start_async()
 
     # Put Inputs
     print(f"\nPID {getpid()}: putting inputs")
-    block.inputs.put_callback("first", 2)
-    block.inputs.put_callback("third", 3)
+    await block.inputs.put_item_async("first", 2)
+    await block.inputs.put_item_async("third", 3)
 
     # Get Outputs
     print(f"\nPID {getpid()}: getting outputs")
-    outputs = block.outputs.get_all()
+    outputs = await block.outputs.get_all_async()
 
     # Stop Block
     print(f"\nPID {getpid()}: stop called")
-    block.stop()
+    await block.stop_async()
 
     print("\nResults:")
     print(f"setup_flag: {block.setup_flag} == True")
@@ -123,8 +130,7 @@ def multiprocessing_example():
     print(f"out_two: {outputs['out_two'][1]} == 12")
     print("")
 
-
 # Main #
 if __name__ == "__main__":
     asyncio.run(asyncio_example())
-    multiprocessing_example()
+    asyncio.run(multiprocessing_example_async())

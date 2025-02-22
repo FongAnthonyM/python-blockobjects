@@ -33,6 +33,7 @@ from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
 from ...io import BaseIO, ArbitratingIOManager, IOWrapper, IORouter
+from ...io.containers import IOQueue
 from .baseblock import BaseBlock
 
 
@@ -81,10 +82,19 @@ class BlockGroup(BaseBlock):
         "put_arbitrated_io_async",
     }
 
+    _default_input_signal_names: ClassVar[tuple[str, ...]] = ("stop_flag", "inner_stop_flag")
+
     init_blocks: ClassVar[bool] = True
     init_io_links: ClassVar[bool] = True
 
     # Attributes #
+    will_evaluate: bool = False
+
+    _signal_callback_map_ = {
+        "stop_callback": {"method": "stop_signal", "signals": ("stop_flag",)},
+        "inner_stop_callback": {"method": "inner_stop_signal", "signals": ("inner_stop_flag",)},
+    }
+
     sets_up_blocks: bool = True
     sets_up_inner_io: bool = True
     sets_up_inner_io_links: bool = True
@@ -531,6 +541,21 @@ class BlockGroup(BaseBlock):
 
             self.actualize_io_ = False
 
+    # Signals
+    def stop_signal(self, stop_flag: bool) -> None:
+        raise NotImplementedError
+
+    async def stop_signal_async(self, stop_flag: bool) -> None:
+        raise NotImplementedError
+
+    def inner_stop_signal(self, stop_flag: bool) -> None:
+        if stop_flag:
+            self.stop_as_task(stop_inner=False)
+
+    async def inner_stop_signal_async(self, stop_flag: bool) -> None:
+        if stop_flag:
+            self.stop_as_task(stop_inner=False)
+
     # Evaluate
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
         """An abstract method which is the evaluation of this object.
@@ -557,7 +582,10 @@ class BlockGroup(BaseBlock):
         await self.ensure_setup_async(**(s_kwargs or {}))
 
         # Start Inner Blocks
-        await gather(*(block.start_async() for block in self.blocks.values()))
+        if self.will_evaluate:
+            await gather(*(block.ensure_setup_async() for block in self.blocks.values()))
+        else:
+            await gather(*(block.start_async() for block in self.blocks.values()))
 
     def start(
         self,
@@ -632,14 +660,34 @@ class BlockGroup(BaseBlock):
             await self._start_async(s_kwargs)
 
     # Stop Block Execution
-    async def _stop_async(self, t_kwargs: dict[str, Any] | None = None) -> None:
+    async def _stop_block_async(
+        self,
+        join_io: bool = True,
+        await_production: bool = True,
+        stop_inner: bool | None = None,
+        join_kwargs: dict[str, Any] | None = None,
+        t_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Stops the continuous execution of the block.
 
         Args:
             t_kwargs: The keyword arguments for block teardown.
         """
+        # Join IO
+        if join_io:
+            await self.inputs.join_all_async(**(join_kwargs or {}))
+
+        # Stop Production Task
+        if self._production_task is not None:
+            self.clear_loop_event()
+            if await_production:
+                await self._production_task
+                self._production_task = None
+
         # Stop Inner Blocks
-        await gather(*(block.stop_async() for block in self.blocks.values()))
+        if stop_inner or (stop_inner is None and not self.will_evaluate):
+            await gather(*(block.stop_async() for block in self.blocks.values()))
 
         # Optionally Teardown
         await self.ensure_teardown_async(**(t_kwargs or {}))
@@ -658,9 +706,12 @@ class BlockGroup(BaseBlock):
 
         await wait_for(gather(*tasks), timeout)
 
-    async def join_async(self, timeout: float | None = None) -> None:
-        tasks = deque((create_task(super().join_async(timeout)),))
+    async def join_async(self, timeout: float | None = None, join_self: bool = False) -> None:
+        tasks = deque()
         for block in self.blocks.values():
             tasks.append(create_task(block.join_async(timeout)))
+
+        if join_self:
+            tasks.append(create_task(super().join_async(timeout)))
 
         await wait_for(gather(*tasks), timeout)

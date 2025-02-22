@@ -103,9 +103,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     default_input_names: ClassVar[tuple[str, ...]] = ()
     default_required_input: ClassVar[tuple[str, ...] | None] = None
+    _default_input_signal_names: ClassVar[tuple[str, ...]] = ("stop_flag",)
     default_input_signal_names: ClassVar[tuple[str, ...]] = ()
     default_optional_input: ClassVar[dict[str, Any]] = {}
     default_output_names: ClassVar[tuple[str, ...]] = ()
+    _default_output_signal_names: ClassVar[tuple[str, ...]] = ("done_flag",)
     default_output_signal_names: ClassVar[tuple[str, ...]] = ()
 
     init_setup: ClassVar[bool] = False
@@ -416,9 +418,9 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         if output_names is None:
             output_names = self.default_output_names
         if input_signal_names is None:
-            input_signal_names = self.default_input_signal_names
+            input_signal_names = set(self.default_input_signal_names) | set(self._default_input_signal_names)
         if output_signal_names is None:
-            output_signal_names = self.default_output_signal_names
+            output_signal_names = set(self.default_output_signal_names) | set(self._default_output_signal_names)
         if optional_input_names is None:
             optional_input_names = self.default_optional_input.keys()
 
@@ -443,7 +445,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         input_signals.put.select("put_item")
         input_signals.put_async.select("put_item_async")
         input_signals.create_ios(names=input_signal_names, group="signals")
-        input_signals.require_io(name="stop_flag", group="signals")
         self.register_io_signals(input_signals)
         self.inputs.encapsulate_io(input_signals)
 
@@ -457,7 +458,6 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         output_signals.put.select("put_all")
         output_signals.put_async.select("put_all_async")
         output_signals.create_ios(names=output_signal_names, group="signals")
-        output_signals.require_io(name="done_flag", group="signals")
         self.outputs.encapsulate_io(output_signals)
 
         # Setup IO Connections
@@ -565,7 +565,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         putter_async = None
 
         if get is not None:
-            getter = BaseMethod(func=partial(self.call_method, method_name=get), instance=instance)
+            getter = partial(self.call_method, instance, method_name=get)
             if get_async is None:
                 get_async = f"{get}_async"
 
@@ -580,10 +580,10 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 else:
                     call_method = self.call_method_async
 
-                getter_async = BaseMethod(func=partial(call_method, method_name=get_async), instance=instance)
+                getter_async = partial(call_method, instance, method_name=get_async)
 
         if put is not None:
-            putter = BaseMethod(func=partial(self.call_method, method_name=put), instance=instance)
+            putter = partial(self.call_method, instance, method_name=put)
             if put_async is None:
                 put_async = f"{put}_async"
 
@@ -598,7 +598,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 else:
                     call_method = self.call_method_async
 
-                putter_async = BaseMethod(func=partial(call_method, method_name=put_async), instance=instance)
+                putter_async = partial(call_method, instance, method_name=put_async)
 
         return IOWrapper(getter, getter_async, putter, putter_async)
 
@@ -1354,10 +1354,11 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     # Stop Block
     async def _stop_block_async(
         self,
-        t_kwargs: dict[str, Any] | None = None,
         join_io: bool = True,
-        join_kwargs: dict[str, Any] | None = None,
         await_production: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
+        t_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         # Join IO
         if join_io:
@@ -1381,12 +1382,19 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
 
     async def stop_block_async(
         self,
-        t_kwargs: dict[str, Any] | None = None,
         join_io: bool = True,
-        join_kwargs: dict[str, Any] | None = None,
         await_production: bool = True,
+        join_kwargs: dict[str, Any] | None = None,
+        t_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
-        await self._stop_block_async(t_kwargs, join_io, join_kwargs, await_production)
+        await self._stop_block_async(
+            join_io=join_io,
+            await_production=await_production,
+            join_kwargs=join_kwargs,
+            t_kwargs=t_kwargs,
+            **kwargs,
+        )
         await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
         await gather(*(self.inputs.stop_server_async(update=False), self.outputs.stop_server_async(update=False)))
 
@@ -1398,6 +1406,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         join_io: bool = True,
         join_kwargs: dict[str, Any] | None = None,
         await_production: bool = True,
+        **kwargs: Any,
     ) -> None:
         """Stops the execution of this block, optionally stopping the server relative to this object.
 
@@ -1406,16 +1415,35 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            self._proxy.stop_block_async(t_kwargs, join_io, join_kwargs, await_production)
+            self._proxy.stop_block_async(
+                join_io=join_io,
+                await_production=await_production,
+                join_kwargs=join_kwargs,
+                t_kwargs=t_kwargs,
+                **kwargs,
+            )
             if update:
                 self.join_execution()
             self._stop_server(update)
         elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._stop_block_async(t_kwargs, join_io, join_kwargs, await_production), loop)
+            coro = self._stop_block_async(
+                join_io=join_io,
+                await_production=await_production,
+                join_kwargs=join_kwargs,
+                t_kwargs=t_kwargs,
+                **kwargs,
+            )
+            run_coroutine_threadsafe(coro, loop)
             self.inputs.stop()
             self.outputs.stop()
         else:
-            run(self._stop_block_async(t_kwargs, join_io, join_kwargs, await_production))
+            run(self._stop_block_async(
+                join_io=join_io,
+                await_production=await_production,
+                join_kwargs=join_kwargs,
+                t_kwargs=t_kwargs,
+                **kwargs,
+            ))
             self.inputs.stop()
             self.outputs.stop()
 
@@ -1427,6 +1455,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         join_io: bool = True,
         join_kwargs: dict[str, Any] | None = None,
         await_production: bool = True,
+        **kwargs: Any,
     ) -> None:
         """Asynchronously Stops the execution of this block, optionally stopping the server relative to this object.
 
@@ -1435,12 +1464,24 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             update: Determines if this object should be updated from the server before stopping.
         """
         if self.is_alive() and server:
-            await self._proxy.stop_block_async(t_kwargs, join_io, join_kwargs, await_production)
+            await self._proxy.stop_block_async(
+                join_io=join_io,
+                await_production=await_production,
+                join_kwargs=join_kwargs,
+                t_kwargs=t_kwargs,
+                **kwargs,
+            )
             if update:
                 await self.join_execution_async()
             await self._stop_server_async(update)
         else:
-            await self._stop_block_async(t_kwargs, join_io, join_kwargs, await_production)
+            await self._stop_block_async(
+                join_io=join_io,
+                await_production=await_production,
+                join_kwargs=join_kwargs,
+                t_kwargs=t_kwargs,
+                **kwargs,
+            )
             await gather(*(self.inputs.stop_async(), self.outputs.stop_async()))
 
     def stop_as_task(self, *args, **kwargs) -> None:

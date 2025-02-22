@@ -38,7 +38,7 @@ async def main():
 
     # Stop Block Group
     print("Joining Block Group")
-    await group.join_stop_task()
+    await group.join_async()
 
     # Check Output
     print("Checking Output")

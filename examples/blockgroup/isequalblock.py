@@ -121,3 +121,7 @@ class IsEqualBlock(BaseBlock):
         """
         print("IsEqualBlock.evaluate")
         return self.is_equal(data)
+
+    # Teardown
+    async def teardown(self) -> None:
+        await self.outputs.put_item_async(self.signal_io_name, {"done_flag": True})
