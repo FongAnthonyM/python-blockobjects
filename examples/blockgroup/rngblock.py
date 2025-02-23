@@ -4,10 +4,9 @@ A Block which generates an array of random numbers.
 # Imports #
 # Standard Libraries #
 from typing import ClassVar, Any
-from uuid import uuid4
 
 # Third-Party Packages #
-from blockobjects import BaseBlock
+from blockobjects import BaseProducerBlock
 import numpy as np
 
 # Local Packages #
@@ -15,7 +14,7 @@ import numpy as np
 
 # Definitions #
 # Classes #
-class RNGBlock(BaseBlock):
+class RNGBlock(BaseProducerBlock):
     """A Block which generates an array of random numbers.
 
     Attributes:
@@ -45,8 +44,6 @@ class RNGBlock(BaseBlock):
     default_output_signal_names: ClassVar[tuple[str, ...]] = ("done_flag",)
 
     # Attributes #
-    will_produce = True
-
     evaluation_limit: int = 0
     n_evaluations: int = 0
 
@@ -74,16 +71,6 @@ class RNGBlock(BaseBlock):
         # Construct #
         if init:
             self.construct(*args, **kwargs)
-
-    # IO
-    def format_output(
-        self,
-        outputs: Any,
-        ids: dict[str, Any] | None = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        return self._format_output(outputs, ids=(uuid4().bytes,), *args, **kwargs)
 
     # Evaluate
     def evaluate(self, *args, **kwargs: Any) -> Any:
