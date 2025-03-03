@@ -234,7 +234,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         # New Attributes #
         # self.async_event_loop = get_event_loop()
         self._executing_waiters = deque()
-        self.signal_callback_map = self.signal_callback_map.copy()
+        self.signal_callback_map = self._signal_callback_map_ | self.signal_callback_map
 
         self._name = f"{self.__class__.__name__}_{uuid4().int}" if name is None else name
 
@@ -635,7 +635,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
         await self.inputs.set_io_async(self.input_link_name, io_wrapper)
 
     def set_signal_links(self) -> None:
-        for name, entry in (self._signal_callback_map_ | self.signal_callback_map).items():
+        for name, entry in self.signal_callback_map.items():
             method = entry["method"]
             method_async = entry.get("method_async", None)
             io_wrapper = self.create_io_wrapper(put=method, put_async=method_async, as_proxy=True)
@@ -644,7 +644,7 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
     async def set_signal_links_async(self) -> None:
         # Create Input Change Tasks
         tasks = deque()
-        for name, entry in (self._signal_callback_map_ | self.signal_callback_map).items():
+        for name, entry in self.signal_callback_map.items():
             method = entry["method"]
             method_async = entry.get("method_async", None)
             io_wrapper = self.create_io_wrapper(put=method, put_async=method_async, as_proxy=True)
