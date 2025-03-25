@@ -69,13 +69,17 @@ class MultiProcessingQueue(Queue, QueueInterface):
         super().__init__(maxsize=maxsize, ctx=get_context() if ctx is None else ctx)
 
     # Pickling
-    def __getstate__(self) -> Any:
-        """Creates a dictionary of attributes which can be used to rebuild this object
+    def __getstate__(self) -> None | dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Gets the object's state for pickling.
 
         Returns:
-            A dictionary of this object's attributes.
+            The state returned will be either of the following types based on the presence of __dict__ and __slots__:
+                None: __dict__ nor __slots__ are present.
+                dict: __dict__ is present and __slots__ is not present.
+                tuple[None, dict]: __dict__ is not present and __slots__ is present.
+                tuple[dict, dict]: __dict__ is present and __slots__ is present.
         """
-        state = self.__dict__.copy()
+        state = super().__getstate__()
         for name in self._ignore_attributes:
             del state[name]
         return Queue.__getstate__(self), state

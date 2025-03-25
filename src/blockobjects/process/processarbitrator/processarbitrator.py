@@ -159,11 +159,15 @@ class ProcessArbitrator(ContextualObjectInterface):
             self.construct(*args, start_server=start_server, proxy_context=proxy_context, _state=_state, **kwargs)
 
     # Pickling
-    def __getstate__(self) -> dict[str, Any]:
-        """Creates a dictionary of attributes which can be used to rebuild this object.
+    def __getstate__(self) -> None | dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Gets the object's state for pickling.
 
         Returns:
-            A dictionary of this object's attributes.
+            The state returned will be either of the following types based on the presence of __dict__ and __slots__:
+                None: __dict__ nor __slots__ are present.
+                dict: __dict__ is present and __slots__ is not present.
+                tuple[None, dict]: __dict__ is not present and __slots__ is present.
+                tuple[dict, dict]: __dict__ is present and __slots__ is present.
         """
         state = super().__getstate__()
         if "_proxy_context" not in state:

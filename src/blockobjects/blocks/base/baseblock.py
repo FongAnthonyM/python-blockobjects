@@ -28,7 +28,7 @@ from warnings import warn
 
 # Third-Party Packages #
 from baseobjects import BaseMethod, SentinelObject
-from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
+from baseobjects.functions import MethodMultiplexer
 from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 
@@ -39,7 +39,7 @@ from ...io.containers import IOQueue, IOContextualQueue
 
 # Definitions #
 # Classes #
-class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
+class BaseBlock(ProcessArbitrator):
     """An abstract class which defines a Block, an easily definable data processing block with inputs and outputs.
 
     In subclasses the "evaluate" method must be defined as it is data processing element of this object. Additionally,
@@ -272,11 +272,15 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
             )
 
     # Pickling
-    def __getstate__(self) -> dict[str, Any]:
-        """Creates a dictionary of attributes which can be used to rebuild this object.
+    def __getstate__(self) -> None | dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Gets the object's state for pickling.
 
         Returns:
-            A dictionary of this object's attributes.
+            The state returned will be either of the following types based on the presence of __dict__ and __slots__:
+                None: __dict__ nor __slots__ are present.
+                dict: __dict__ is present and __slots__ is not present.
+                tuple[None, dict]: __dict__ is not present and __slots__ is present.
+                tuple[dict, dict]: __dict__ is present and __slots__ is present.
         """
         state = super().__getstate__()
         for name in {"async_event_loop", "linked"}:
@@ -284,11 +288,18 @@ class BaseBlock(ProcessArbitrator, CallableMultiplexObject):
                 del state[name]
         return state
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Builds this object based on a dictionary of corresponding attributes.
+    def __setstate__(self, state: Any) -> None:
+        """Sets the object's state from a pickled state.
+
+        By default, the state can be one of the following types with the corresponding behavior:
+            None: Will not set any state.
+            dict: Will set the __dict__ attribute to the state.
+            tuple[None, dict]: Will set the slot values to the second dict of the tuple.
+            tuple[dict, dict]: Will set the __dict__ attribute to the first dict of the tuple and set the slot values
+                to the second dict of the tuple.
 
         Args:
-            state: The attributes to build this object from.
+            state: An object which can be used to set the state of this object.
         """
         super().__setstate__(state)
         # self.async_event_loop = get_event_loop()

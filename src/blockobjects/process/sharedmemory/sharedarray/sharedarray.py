@@ -92,13 +92,17 @@ class SharedArray(StaticWrapper):
         return self._shared_memory.name
 
     # Pickling
-    def __getstate__(self) -> dict[str, Any]:
-        """Creates a dictionary of attributes which can be used to rebuild this object.
+    def __getstate__(self) -> None | dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Gets the object's state for pickling.
 
         Returns:
-            dict: A dictionary of this object's attributes.
+            The state returned will be either of the following types based on the presence of __dict__ and __slots__:
+                None: __dict__ nor __slots__ are present.
+                dict: __dict__ is present and __slots__ is not present.
+                tuple[None, dict]: __dict__ is not present and __slots__ is present.
+                tuple[dict, dict]: __dict__ is present and __slots__ is present.
         """
-        state = self.__dict__.copy()
+        state = self.__getstate__()
         state["_array"] = None
         state["_shared_memory"] = None
         state["kwargs"] = {
@@ -112,14 +116,21 @@ class SharedArray(StaticWrapper):
 
         return state
 
-    def __setstate__(self, state: Mapping[str, Any]) -> None:
-        """Builds this object based on a dictionary of corresponding attributes.
+    def __setstate__(self, state: Any) -> None:
+        """Sets the object's state from a pickled state.
+
+        By default, the state can be one of the following types with the corresponding behavior:
+            None: Will not set any state.
+            dict: Will set the __dict__ attribute to the state.
+            tuple[None, dict]: Will set the slot values to the second dict of the tuple.
+            tuple[dict, dict]: Will set the __dict__ attribute to the first dict of the tuple and set the slot values
+                to the second dict of the tuple.
 
         Args:
-            state: The attributes to build this object from.
+            state: An object which can be used to set the state of this object.
         """
         kwargs = state.pop("kwargs")
-        self.__dict__.update(state)
+        self.__setstate__(state)
 
         self.construct_existing_array(**kwargs)
 

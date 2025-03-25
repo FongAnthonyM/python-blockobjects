@@ -22,7 +22,7 @@ __email__ = __email__
 from typing import ClassVar, Any
 
 # Third-Party Packages #
-from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
+from baseobjects.functions import MethodMultiplexer
 
 # Local Packages #
 from .baseio import BaseIO
@@ -30,7 +30,7 @@ from .baseio import BaseIO
 
 # Definitions #
 # Classes #
-class BaseIOMultiplexer(BaseIO, CallableMultiplexObject):
+class BaseIOMultiplexer(BaseIO):
     """An abstract class for IO Objects which use MethodMultiplexer objects for the get and put methods.
 
     BaseIOMultiplexer sets the get and put methods to be MethodMultiplexer objects which dispatches the get and put
