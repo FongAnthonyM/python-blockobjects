@@ -27,7 +27,7 @@ from warnings import warn
 
 # Third-Party Packages #
 from baseobjects.collections import OrderableDict
-from baseobjects.functions import CallableMultiplexObject, MethodMultiplexer
+from baseobjects.functions import MethodMultiplexer
 from ...process import ProcessArbitrator, arbitratemethod
 from ...process.context import BaseProcessingContext, ContextualEvent
 

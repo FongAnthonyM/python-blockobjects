@@ -73,7 +73,7 @@ class BaseProcessingContext(BaseObject):
                 tuple[None, dict]: __dict__ is not present and __slots__ is present.
                 tuple[dict, dict]: __dict__ is present and __slots__ is present.
         """
-        state = super().__getstate__()
+        state = super().__getstate__().copy()
         state["object_register"] = tuple(k for k in self.object_register.keys())
         return state
 

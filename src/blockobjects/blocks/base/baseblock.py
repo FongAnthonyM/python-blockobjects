@@ -679,10 +679,12 @@ class BaseBlock(ProcessArbitrator):
     # Signals
     def stop_signal(self, stop_flag: bool) -> None:
         if stop_flag:
+            self.stop_flag = True
             self.stop_as_task()
 
     async def stop_signal_async(self, stop_flag: bool) -> None:
         if stop_flag:
+            self.stop_flag = True
             self.stop_as_task()
 
     # Workflow Parts [Setup [Input -> Evaluate -> Output] Teardown]

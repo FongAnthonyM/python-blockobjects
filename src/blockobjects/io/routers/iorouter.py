@@ -102,7 +102,15 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
     # Class Methods #
     @classmethod
     def is_endpoint_link(cls, source: "IORouter", destination: "IORouter") -> bool:
-        return source.is_remote() and not destination.is_remote()
+        s_parent = source.parent
+        d_parent = destination.parent
+        if (source is d_parent or 
+            destination is s_parent or 
+            (s_parent is not None and d_parent is not None and s_parent.parent is d_parent)
+        ):
+            return False
+        else:
+            return source.is_remote() and not destination.is_remote()
 
     @classmethod
     def is_listen_link(cls, source: "IORouter", destination: "IORouter") -> bool:
@@ -427,7 +435,7 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
 
     def is_remote(self) -> bool:
         """Checks if this object is remote."""
-        return False
+        return self.parent.is_remote() if self.parent is not None else False
 
     # Ordering
     def get_order(self) -> tuple[str, ...]:
