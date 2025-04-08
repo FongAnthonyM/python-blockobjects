@@ -1,6 +1,8 @@
 """ baseblock.py.py
 
 """
+from multiprocessing.forkserver import set_forkserver_preload
+
 # Package Header #
 from ...header import *
 
@@ -29,11 +31,11 @@ from warnings import warn
 # Third-Party Packages #
 from baseobjects import BaseMethod, SentinelObject
 from baseobjects.functions import MethodMultiplexer
-from ...process import ProcessArbitrator, arbitratemethod
+from ...process import ProcessArbitrator, arbitratemethod, ProxyInterface
 from ...process.context import BaseProcessingContext, ContextualEvent
 
 # Local Packages #
-from ...io import IORouter, ArbitratingIOManager, IOWrapper, IdentifiedItem
+from ...io import IORouter, ArbitratingIOManager, IOArbitratorWrapper, IdentifiedItem
 from ...io.containers import IOQueue, IOContextualQueue
 
 
@@ -68,22 +70,15 @@ class BaseBlock(ProcessArbitrator):
         init: Determines if this object will construct.
         **kwargs: Keyword arguments for inheritance.
     """
-    # Static Methods #
-    @staticmethod
-    def call_method(obj, *args, method_name: str, **kwargs) -> None:
-        return getattr(obj, method_name)(*args, **kwargs)
-
-    @staticmethod
-    async def call_method_async(obj, *args, method_name: str, **kwargs) -> None:
-        return getattr(obj, method_name)(*args, **kwargs)
-
-    @staticmethod
-    async def call_async_method_async(obj, *args, method_name: str, **kwargs) -> None:
-        return await getattr(obj, method_name)(*args, **kwargs)
-
     # Class Attributes #
     public_exposed: ClassVar[bool] = False
     exposed: ClassVar[set] = {
+        "set_inputs_proxy",
+        "set_inputs_proxy_async",
+        "set_outputs_proxy",
+        "set_outputs_proxy_async",
+        "finalize_io",
+        "finalize_io_async",
         "is_executing",
         "is_loop_event",
         "set_loop_event",
@@ -128,23 +123,28 @@ class BaseBlock(ProcessArbitrator):
     _has_torndown: bool = False
 
     # IO
-    sets_up_io: bool = True
-    actualize_io_: bool = True
     input_link_name: str = "block_input"
-    inputs: ArbitratingIOManager
-    outputs: ArbitratingIOManager
-
-    signal_io_name: str = "block_signals"
-    signals_type: type[IORouter] = IORouter
-    _signal_callback_map_ = {"stop_callback": {"method": "stop_signal", "signals": ("stop_flag",)}}
-    signal_callback_map: dict[str, dict[str, str | dict[str, Any]]] = {}
 
     _output_order: tuple[str, ...] | None = None
     output_as_items: bool = False
     no_output_sentinel: Any = SentinelObject("no_output_sentinel")
 
-    input_callback_method: str = "_produce"
-    input_callback_method_async: str = "_produce_async"
+    io_wrapper_get_method: str | None = None
+    io_wrapper_get_async_method: str | None = None
+    io_wrapper_put_method: str | None = "_produce"
+    io_wrapper_put_async_method: str | None = "_produce_async"
+
+    inputs: ArbitratingIOManager
+    outputs: ArbitratingIOManager
+
+    # IO Signals
+    signal_io_name: str = "block_signals"
+    signals_type: type[IORouter] = IORouter
+
+    _signal_callback_map_: dict[str, dict[str, str | dict[str, Any]]] = {
+        "stop_callback": {"method": "stop_signal", "signals": ("stop_flag",)}
+    }
+    signal_callback_map: dict[str, dict[str, str | dict[str, Any]]] = {}
 
     # Setup/Evaluate/Teardown
     setup_kwargs: dict[str, Any] = {}
@@ -349,6 +349,7 @@ class BaseBlock(ProcessArbitrator):
 
         if init_io and _state is None:
             self.create_io()
+            self.build_io()
 
         if _state is not None and "_will_proxy" in _state:
             del _state["_will_proxy"]
@@ -403,7 +404,7 @@ class BaseBlock(ProcessArbitrator):
         """Clears the execution loop event."""
         self._loop_event = False
 
-    # IO Objects
+    # IO Management
     def create_io(
         self,
         input_names: str | Iterable[str] | None = None,
@@ -422,6 +423,7 @@ class BaseBlock(ProcessArbitrator):
             input_signal_names: The names of the input signals to create.
             output_signal_names: The names of the output signals to create.
             *args: The arguments for constructing the io.
+            optional_input_names: The names of the optional input names.
             **kwargs: The keyword arguments for constructing the io.
         """
         if input_names is None:
@@ -448,6 +450,12 @@ class BaseBlock(ProcessArbitrator):
             put_async="after_put_async",
             get_groups=("required", "optional"),
         )
+        self.inputs.io_objects[self.input_link_name] = self.create_io_wrapper(
+            get=self.io_wrapper_get_method,
+            get_async=self.io_wrapper_get_async_method,
+            put=self.io_wrapper_put_method,
+            put_async=self.io_wrapper_put_async_method,
+        )
 
         # Create Input Signals
         input_signals = self.inputs.create_io(name=self.signal_io_name, group="signals", type_=self.signals_type)
@@ -471,9 +479,33 @@ class BaseBlock(ProcessArbitrator):
         output_signals.create_ios(names=output_signal_names, group="signals")
         self.outputs.encapsulate_io(output_signals)
 
-        # Setup IO Connections
-        self.setup_io()
+    def build_inputs(self, *args: Any, **kwargs: Any) -> None:
+        """Builds the inputs with the default settings and routing.
 
+        Args:
+            *args: Positional arguments for creating the inputs.
+            **kwargs: Keyword arguments for creating the inputs.
+        """
+
+    def build_outputs(self, *args: Any, **kwargs: Any) -> None:
+        """Builds the outputs with the default settings and routing.
+
+        Args:
+            *args: Positional arguments for creating the outputs.
+            **kwargs: Keyword arguments for creating the outputs.
+        """
+
+    def build_io(self, input_kwargs: dict[str, Any] | None = None, output_kwargs: dict[str, Any] | None = None) -> None:
+        """Builds the IO with the default settings and routing.
+
+        Args:
+            input_kwargs: Keyword arguments for creating the inputs.
+            output_kwargs: Keyword arguments for creating the outputs.
+        """
+        self.build_inputs(**(input_kwargs or {}))
+        self.build_outputs(**(output_kwargs or {}))
+
+    # IO Signals
     def format_signal_callback(
         self,
         name: str,
@@ -481,6 +513,22 @@ class BaseBlock(ProcessArbitrator):
         create_kwargs: dict | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """Formats and creates a dictionary representing signal callback configurations.
+
+        This function generates a dictionary that includes the provided name, signals, and other callback configuration
+        parameters. It merges the given configurations with additional optional keyword arguments, allowing for a
+        flexible customization of the returned dictionary. If `create_kwargs` is provided, it merges this dictionary
+        with the base configuration.
+
+        Args:
+            name: The name of the input/output signal group.
+            signals: A single signal or an iterable collection of signals associated with the callback.
+            create_kwargs: An optional dictionary of additional configuration parameters to merge into the output.
+            **kwargs: Additional keyword arguments to customize further callback-related configurations.
+
+        Returns:
+            dict: A dictionary containing the signal callback configurations.
+        """
         return {
             "ios": signals,
             "io_name": name,
@@ -489,192 +537,295 @@ class BaseBlock(ProcessArbitrator):
         } | (create_kwargs or {})
 
     def register_io_signals(self, router: IORouter) -> None:
-        for name, entry in self.signal_callback_map.items():
-            router.create_io(name=name, group="block")
-            router.create_ios_to_io_callback(**self.format_signal_callback(name, **entry))
+        """Registers I/O signals with the specified IORouter instance.
 
-    def build_io(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Builds the IO with the default settings and routing.
+        Uses the signal_callback_map and registers each signal with the router, by creating the corresponding IO and
+        setting up the appropriate callbacks. It facilitates the routing and handling of I/O operations based on
+        predefined signal definitions and callback configurations.
 
         Args:
-            *args: Positional arguments for creating the IO.
-            override: Determines if the IO will be overridden.
-            **kwargs: Keyword arguments for creating the IO.
+            router: The IORouter to register I/O signals and callbacks to.
         """
+        for name, entry in (self._signal_callback_map_ | self.signal_callback_map).items():
+            router.create_io(name=name, group="block")
+            router.create_ios_to_io_callback(**self.format_signal_callback(name, **entry))
+            method = entry["method"]
+            method_async = entry.get("method_async", None)
+            io_wrapper = self.create_io_wrapper(put=method, put_async=method_async)
+            router.io_objects[name] = io_wrapper
 
-    async def build_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        return self.build_io(*args, override=override, **kwargs)
-
-    def setup_io(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_io:
-            self.build_io(*args, **kwargs)
-            self.sets_up_io = False
-
-    async def setup_io_async(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_io:
-            await self.build_io_async(*args, **kwargs)
-            self.sets_up_io = False
-
-    def start_inputs(self) -> None:
-        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
-            self.inputs.start_server()
-
-    async def start_inputs_async(self) -> None:
-        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
-            self.inputs.start_server()
-
-    def start_outputs(self) -> None:
-        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
-            self.outputs.start_server()
-
-    async def start_outputs_async(self) -> None:
-        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
-            self.outputs.start_server()
-
-    def start_io(self) -> None:
-        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
-            self.inputs.start_server()
-        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
-            self.outputs.start_server()
-
-    async def start_io_async(self) -> None:
-        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
-            self.inputs.start_server()
-        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
-            self.outputs.start_server()
-
-    def actualize_io(self) -> None:
-        if self.sets_up_io:
-            if self.inputs.is_proxy():
-                self.inputs.update_server_io()
-            if self.outputs.is_proxy():
-                self.outputs.update_server_io()
-            self.sets_up_io = False
-
-    async def actualize_io_async(self) -> None:
-        if self.sets_up_io:
-            if self.inputs.is_proxy():
-                await self.inputs.update_server_io_async()
-            if self.outputs.is_proxy():
-                await self.outputs.update_server_io_async()
-            self.sets_up_io = False
-
+    # IO Linking
     def create_io_wrapper(
         self,
         get: str | None = None,
         get_async: str | None = None,
         put: str | None = None,
         put_async: str | None = None,
-        as_proxy: bool = True,
-    ) -> IOWrapper:
-        # Use BaseMethod because it uses weak references
-        instance = self._proxy if as_proxy and self.is_alive() else self
+    ) -> IOArbitratorWrapper:
+        """Creates an IOArbitratorWrapper with wrapping this object.
 
-        getter = None
-        getter_async = None
-        putter = None
-        putter_async = None
+        Uses the provided `get`, `get_async`, `put`, and `put_async` method names as the methods for the
+        IOArbitratorWrapper methods. It checks that the methods exist and assigns the asynchronous variants of the
+        methods if not provided.
+
+        Args:
+            get: The name of the method for the "get" operation.
+            get_async: The name of the asynchronous method for the "get" operation.
+            put: The name of the method for the "put" operation.
+            put_async: The name of the asynchronous method for the "put" operation.
+
+        Returns:
+            IOArbitratorWrapper: An instance of IOArbitratorWrapper configured with the given method names.
+
+        Raises:
+            AttributeError: If any method name provided does not exist.
+        """
+        # Error Check Methods
+        if get_async is not None:
+            getattr(self, get_async)  # Check if method exists, raise the Attribute Error if not.
 
         if get is not None:
-            getter = partial(self.call_method, instance, method_name=get)
-            if get_async is None:
+            getattr(self, get)  # Check if method exists, raise the Attribute Error if not.
+            if get_async is None and hasattr(self, f"{get}_async"):
                 get_async = f"{get}_async"
 
-        if get_async is not None:
-            if (get_async_method := getattr(self, get_async, None)) is None:
-                if (get_async_method := getattr(self, get, None)) is None:
-                    get_async = get
-
-            if get_async_method is not None:
-                if iscoroutinefunction(get_async_method):
-                    call_method = self.call_async_method_async
-                else:
-                    call_method = self.call_method_async
-
-                getter_async = partial(call_method, instance, method_name=get_async)
+        if put_async is not None:
+            getattr(self, put_async)  # Check if method exists, raise the Attribute Error if not.
 
         if put is not None:
-            putter = partial(self.call_method, instance, method_name=put)
-            if put_async is None:
+            getattr(self, put)  # Check if method exists, raise the Attribute Error if not.
+            if put_async is None and hasattr(self, f"{put}_async"):
                 put_async = f"{put}_async"
 
-        if put_async is not None:
-            if (put_async_method := getattr(self, put_async, None)) is None:
-                if (put_async_method := getattr(self, put, None)) is None:
-                    put_async = put
-
-            if put_async_method is not None:
-                if iscoroutinefunction(put_async_method):
-                    call_method = self.call_async_method_async
-                else:
-                    call_method = self.call_method_async
-
-                putter_async = partial(call_method, instance, method_name=put_async)
-
-        return IOWrapper(getter, getter_async, putter, putter_async)
+        # Create IO Wrapper
+        return IOArbitratorWrapper(
+            arbitrator=self,
+            getter=get,
+            getter_async=get_async,
+            putter=put,
+            putter_async=put_async,
+        )
 
     def set_input_link(
         self,
-        name: str | None = None,
-        name_async: str | None = None,
-        as_proxy: bool = True,
+        get: str | None = None,
+        get_async: str | None = None,
+        put: str | None = None,
+        put_async: str | None = None,
     ) -> None:
-        # Select Methods from given names
-        if name is None:
-            name = self.input_callback_method
+        """Sets the main input link from the inputs object to this block.
 
-        if name_async is None:
-            name_async = self.input_callback_method_async
+        An IO wrapper is created with the `create_io_wrapper` method which servers as the link between the inputs and
+        the block.
 
-        io_wrapper = self.create_io_wrapper(put=name, put_async=name_async, as_proxy=as_proxy)
-        self.inputs.set_io(self.input_link_name, io_wrapper)
+        Args:
+            get: The name of the method in this block which the wrapper will call for the "get" operation.
+            get_async: The name of the asynchronous method in this block which the wrapper will call for the "get_async"
+                operation.
+            put: The name of the method in this block which the wrapper will call for the "put" operation.
+            put_async: The name of the asynchronous method in this block which the wrapper will call for the "put_async"
+                operation.
+        """
+        if get is None:
+            get = self.io_wrapper_get_method
+        if get_async is None:
+            get_async = self.io_wrapper_get_async_method
+        if put is None:
+            put = self.io_wrapper_put_method
+        if put_async is None:
+            put_async = self.io_wrapper_put_async_method
+
+        self.inputs.set_io(self.input_link_name, self.create_io_wrapper(get, get_async, put, put_async))
 
     async def set_input_link_async(
         self,
-        name: str | None = None,
-        name_async: str | None = None,
-        as_proxy: bool = False,
+        get: str | None = None,
+        get_async: str | None = None,
+        put: str | None = None,
+        put_async: str | None = None,
     ) -> None:
-        # Select Methods from given names
-        if name is None:
-            name = self.input_callback_method
+        """Asynchronously sets the main input link from the inputs object to this block.
 
-        if name_async is None:
-            name_async = self.input_callback_method_async
+        An IO wrapper is created with the `create_io_wrapper` method which servers as the link between the inputs and
+        the block.
 
-        io_wrapper = self.create_io_wrapper(put=name, put_async=name_async, as_proxy=as_proxy)
-        await self.inputs.set_io_async(self.input_link_name, io_wrapper)
+        Args:
+            get: The name of the method in this block which the wrapper will call for the "get" operation.
+            get_async: The name of the asynchronous method in this block which the wrapper will call for the "get_async"
+                operation.
+            put: The name of the method in this block which the wrapper will call for the "put" operation.
+            put_async: The name of the asynchronous method in this block which the wrapper will call for the "put_async"
+                operation.
+        """
+        if get is None:
+            get = self.io_wrapper_get_method
+        if get_async is None:
+            get_async = self.io_wrapper_get_async_method
+        if put is None:
+            put = self.io_wrapper_put_method
+        if put_async is None:
+            put_async = self.io_wrapper_put_async_method
 
-    def set_signal_links(self) -> None:
-        for name, entry in (self._signal_callback_map_ | self.signal_callback_map).items():
+        await self.inputs.set_io_async(self.input_link_name, self.create_io_wrapper(get, get_async, put, put_async))
+
+    def set_signal_links(self, signal_map: dict[str, Any] | None = None) -> None:
+        """Sets up signal links from the inputs to this block.
+
+        Sets the input signal links by iterating over the signal callback maps and building the link with an
+        IOArbitratorWrapper. For each entry in the signal callback map, it retrieves the methods to which the signal
+        will execute (synchronous or asynchronous), constructs an IO wrapper using the respective methods, and sets it
+        the inputs with using methods which work for assignment across processes.
+
+        Args:
+            signal_map: A dictionary of the signal callback map with the name of the signal and the names of the method
+                to use.
+        """
+        # When signal map is not provided, assign all signals registered in this block
+        if signal_map is None:
+            signal_map = self._signal_callback_map_ | self.signal_callback_map
+
+        # Use mapping to assign signals
+        for name, entry in signal_map.items():
             method = entry["method"]
             method_async = entry.get("method_async", None)
-            io_wrapper = self.create_io_wrapper(put=method, put_async=method_async, as_proxy=True)
+            io_wrapper = self.create_io_wrapper(put=method, put_async=method_async)
             self.inputs.set_inner_io((self.signal_io_name, name), io_wrapper)
 
-    async def set_signal_links_async(self) -> None:
-        # Create Input Change Tasks
+    async def set_signal_links_async(self, signal_map: dict[str, Any] | None = None) -> None:
+        """Asynchronously sets up signal links from the inputs to this block.
+
+        Sets the input signal links by iterating over the signal callback maps and building the link with an
+        IOArbitratorWrapper. For each entry in the signal callback map, it retrieves the methods to which the signal
+        will execute (synchronous or asynchronous), constructs an IO wrapper using the respective methods, and sets it
+        the inputs with using methods which work for assignment across processes.
+
+         Args:
+            signal_map: A dictionary of the signal callback map with the name of the signal and the names of the method
+                to use.
+        """
+        # When signal map is not provided, assign all signals registered in this block
+        if signal_map is None:
+            signal_map = self._signal_callback_map_ | self.signal_callback_map
+
+        # Use mapping to assign signals, tasks are created for async efficiency
         tasks = deque()
         for name, entry in (self._signal_callback_map_ | self.signal_callback_map).items():
             method = entry["method"]
             method_async = entry.get("method_async", None)
-            io_wrapper = self.create_io_wrapper(put=method, put_async=method_async, as_proxy=True)
+            io_wrapper = self.create_io_wrapper(put=method, put_async=method_async)
             tasks.append(self.inputs.set_inner_io_async((self.signal_io_name, name), io_wrapper))
 
         # Await Input Change Tasks
         await gather(*tasks)
 
+    def set_inputs_proxy(self, proxy: ProxyInterface, inner: tuple[bool, ...] = (), update: bool = False) -> None:
+        self.inputs.set_proxy(proxy, inner, update)
+
+    async def set_inputs_proxy_async(
+        self,
+        proxy: ProxyInterface,
+        inner: tuple[bool, ...] = (),
+        update: bool = False,
+    ) -> None:
+        await self.inputs.set_proxy_async(proxy, inner, update)
+
+    def set_outputs_proxy(self, proxy: ProxyInterface, inner: tuple[bool, ...] = (), update: bool = False) -> None:
+        self.outputs.set_proxy(proxy, inner, update)
+
+    async def set_outputs_proxy_async(
+        self,
+        proxy: ProxyInterface,
+        inner: tuple[bool, ...] = (),
+        update: bool = False,
+    ) -> None:
+        await self.outputs.set_proxy_async(proxy, inner, update)
+
+    # IO Operation
+    def start_inputs(self) -> None:
+        """Starts the input server."""
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+
+    async def start_inputs_async(self) -> None:
+        """Asynchronously starts the input server."""
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+
+    def start_outputs(self) -> None:
+        """Starts the output server."""
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    async def start_outputs_async(self) -> None:
+        """Asynchronously starts the output server."""
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    def start_io(self) -> None:
+        """Starts both the inputs and outputs servers."""
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    async def start_io_async(self) -> None:
+        """Asynchronously starts both the inputs and outputs servers."""
+        if (self.will_proxy or self.inputs.will_proxy) and not self.inputs.is_alive():
+            self.inputs.start_server()
+        if (self.will_proxy or self.outputs.will_proxy) and not self.outputs.is_alive():
+            self.outputs.start_server()
+
+    def get_proxies(self) -> dict[str, Any]:
+        return {"inputs": self.inputs._proxy, "block": self._proxy, "outputs": self.outputs._proxy}
+
+    async def get_proxies_async(self) -> dict[str, Any]:
+        return {"inputs": self.inputs._proxy, "block": self._proxy, "outputs": self.outputs._proxy}
+
+    def set_proxies(self, proxies: dict[str, Any]) -> None:
+        if (i_proxy := proxies.get("inputs", None)) is not None:
+            self.inputs.set_proxy(i_proxy)
+        if (b_proxy := proxies.get("block", None)) is not None:
+            self.set_proxy(b_proxy)
+        if (o_proxy := proxies.get("outputs", None)) is not None:
+            self.outputs.set_proxy(o_proxy)
+
+    async def set_proxies_async(self, proxies: dict[str, Any]) -> None:
+        coros = deque()
+        if (i_proxy := proxies.get("inputs", None)) is not None:
+            coros.append(self.inputs.set_proxy_async(i_proxy))
+        if (b_proxy := proxies.get("block", None)) is not None:
+            coros.append(self.set_proxy_async(b_proxy))
+        if (o_proxy := proxies.get("outputs", None)) is not None:
+            coros.append(self.outputs.set_proxy_async(o_proxy))
+        if coros:
+            await gather(*coros)
+
+    def update_proxies(self) -> dict[str, Any]:
+        return {"inputs": self.inputs._proxy, "block": self._proxy, "outputs": self.outputs._proxy}
+
+    async def update_proxies_async(self) -> dict[str, Any]:
+        return {"inputs": self.inputs._proxy, "block": self._proxy, "outputs": self.outputs._proxy}
+
+    def update_io_proxies(self) -> None:
+        """Updates both the inputs' and outputs' proxies to match the current state."""
+        self.inputs.update_server()
+        self.outputs.update_server()
+
+    async def update_io_proxies_async(self) -> None:
+        """Asynchronously updates both the inputs' and outputs' proxies to match the current state.'"""
+        await gather(self.inputs.update_server_async(), self.outputs.update_server_async())
+
     def finalize_io(self) -> None:
-        self.set_input_link()
-        self.set_signal_links()
+        """Finalizes the inputs and outputs before starting the block."""
+        self.inputs.register_listener_links()
         self.inputs.start_listeners()
+        self.outputs.register_listener_links()
         self.outputs.start_listeners()
 
     async def finalize_io_async(self) -> None:
-        await self.set_input_link_async()
-        await self.set_signal_links_async()
-        await self.inputs.start_listeners_async()
-        await self.outputs.start_listeners_async()
+        """Asynchronously finalizes the inputs and outputs before starting the block."""
+        await gather(self.inputs.register_listener_links_async(), self.outputs.register_listener_links_async())
+        await gather(self.inputs.start_listeners_async(), self.outputs.start_listeners_async())
 
     # Signals
     def stop_signal(self, stop_flag: bool) -> None:
@@ -805,9 +956,9 @@ class BaseBlock(ProcessArbitrator):
             The result of the evaluation.
         """
         if iscoroutinefunction(self.evaluate):
-            return await self.evaluate(*args, **kwargs)
+            return await self.evaluate(*args, input_ids=input_ids, **kwargs)
         else:
-            return self.evaluate(*args, **kwargs)
+            return self.evaluate(*args, input_ids=input_ids, **kwargs)
 
     # Output
     def _format_output(
@@ -1272,6 +1423,62 @@ class BaseBlock(ProcessArbitrator):
         else:
             await self._run(s_kwargs, e_kwargs, t_kwargs)
 
+    # Start Proxy
+    def start_proxy(self, as_proxy: bool | None = None, update_local: bool = False, update_io: bool = False) -> None:
+        """Starts the proxy server for this block.
+
+        Args:
+            update_local: Determines if the local objects' proxies will be updated from the other proxies.
+            update_io: Determines if the IO should be updated.
+        """
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            # Start proxy servers
+            self.start_outputs()
+            self._start_server()
+            self.start_inputs()
+            # Set the inputs proxy on this object's proxy
+            self.set_inputs_proxy(self.inputs._proxy)
+
+        # Update Proxy References
+        if update_local:
+            # Cascade update all the proxies so they have the references/links to the other proxies.
+            self.update_proxies()
+
+        # Update IO
+        if update_io:
+            # Cascade update all the IO objects so they have the references/link to the other proxies.
+            self.update_io_proxies()
+
+    async def start_proxy_async(
+        self,
+        as_proxy: bool | None = None,
+        update_local: bool = False,
+        update_io: bool = False,
+    ) -> None:
+        """Asynchronously starts the proxy server for this block.
+
+        Args:
+            update_local: Determines if the local objects' proxies will be updated from the other proxies.
+            update_io: Determines if the IO should be updated.
+        """
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            # Start proxy servers
+            self.start_outputs()
+            self._start_server()
+            self.start_inputs()
+            # Set the inputs proxy on this object's proxy
+            await self.set_inputs_proxy_async(self.inputs._proxy)
+
+        # Update Proxy References
+        if update_local:
+            # Cascade update all the proxies so they have the references/links to the other proxies.
+            await self.update_proxies_async()
+
+        # Update IO
+        if update_io:
+            # Cascade update all the IO objects so they have the references/link to the other proxies.
+            await self.update_io_proxies_async()
+
     # Start Block
     async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
@@ -1307,25 +1514,22 @@ class BaseBlock(ProcessArbitrator):
         Args:
             as_proxy: Determines if this object should run in a separate process.
             s_kwargs: The keyword arguments for block setup.
+            finalize: Determines if the block will finalize the IO.
         """
         # Raise Error if the task is already running.
         if self.is_executing():
             raise RuntimeError(f"{self} task is already running.")
 
-        # Setup IO and Start Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
-            self.start_io()
-            self.actualize_io()
-            self._start_server()
-            self.finalize_io()
-        else:
-            self.actualize_io()
-            if finalize:
-                self.finalize_io()
+        # Start Proxy Servers (Determined in the method)
+        self.start_proxy(as_proxy)
 
-        # Use Correct Context
+        # Finalize IO
+        if finalize:
+            self.finalize_io()
+
+        # Start and Use Correct Context
         if self.is_alive():
-            self._proxy.start(None, s_kwargs, False)
+            self._proxy.start(None, s_kwargs, finalize=False)
         elif (loop := self.async_event_loop) is not None:
             run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
         else:
@@ -1342,25 +1546,22 @@ class BaseBlock(ProcessArbitrator):
         Args:
             as_proxy: Determines if this object should run in a separate process.
             s_kwargs: The keyword arguments for block setup.
+            finalize: Determines if the block will finalize the IO.
         """
         # Raise Error if the task is already running.
         if self.is_executing():
             raise RuntimeError(f"{self} task is already running.")
 
-        # Setup IO and Start Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
-            await self.start_io_async()
-            await self.actualize_io_async()
-            self._start_server()
-            await self.finalize_io_async()
-        else:
-            await self.actualize_io_async()
-            if finalize:
-                await self.finalize_io_async()
+        # Start Proxy Servers (Determined in the method)
+        await self.start_proxy_async(as_proxy)
 
-        # Use Correct Context
+        # Finalize IO
+        if finalize:
+            await self.finalize_io_async()
+
+        # Start Use Correct Context
         if self.is_alive():
-            await self._proxy.start_async(None, s_kwargs, False)
+            await self._proxy.start_async(None, s_kwargs, finalize=False)
         else:
             await self._start_async(s_kwargs)
 

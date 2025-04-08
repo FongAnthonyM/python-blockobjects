@@ -265,7 +265,6 @@ class AsyncQueue(Queue, QueueInterface):
         """
         if block:
             while self.full():
-                print("blocking")
                 putter = self._get_loop().create_future()
                 self._putters.append(putter)
                 try:

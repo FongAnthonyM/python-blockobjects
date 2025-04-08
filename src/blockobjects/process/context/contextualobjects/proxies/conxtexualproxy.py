@@ -18,6 +18,7 @@ from functools import partialmethod
 from typing import Any, ClassVar
 
 # Third-Party Packages #
+from baseobjects import BaseReducible
 from baseobjects.typing import AnyCallable
 from baseobjects.operations import iter_public_method_names
 
@@ -33,13 +34,13 @@ def rebuild_proxy(cls, name, proxy, exposed, context) -> ProxyInterface | None:
 
 
 # Classes #
-class ContextualProxy(ContextualObjectInterface, ProxyInterface):
+class ContextualProxy(ContextualObjectInterface, ProxyInterface, BaseReducible):
 
     # Static Methods #
     @staticmethod
-    def _call_inner_method(obj, name, *args, **kwargs):
+    def _call_inner_method(__obj, __name, /, *args, **kwargs):
         """Evaluates the wrapped object's method."""
-        return getattr(obj._proxy, name)(*args, **kwargs)
+        return getattr(__obj._proxy, __name)(*args, **kwargs)
 
     # Class Attributes #
     _proxy_classes: ClassVar[dict[type, dict[tuple[str, tuple], type]]] = {}

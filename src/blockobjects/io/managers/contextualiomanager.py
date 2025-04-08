@@ -141,3 +141,13 @@ class ContextualIOManager(BaseIOManager):
     ) -> None:
         kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
         super().create_io_listen_container(name, type_, *args, **kwargs)
+
+    async def create_io_listen_container_async(
+        self,
+        name: str,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        kwargs = {"context": self.contexts[self.default_context]} | (kwargs or {})
+        await super().create_io_listen_container_async(name, type_, *args, **kwargs)

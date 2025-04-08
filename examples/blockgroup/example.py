@@ -21,7 +21,7 @@ async def main():
     print("BlockGroup Example:")
 
     # Create Block Group
-    group = ExampleBlockGroup(will_proxy=True)
+    group = ExampleBlockGroup(will_proxy=False)
     # Add Final Queue
     group.outputs.create_io("group_result", group="required", type_=IOContextualQueue)
 
@@ -33,8 +33,6 @@ async def main():
     # Wait for output
     first_output = await group.outputs.get_all_async()
     second_output = await group.outputs.get_all_async()
-    third_output = await group.outputs.get_all_async()
-    fourth_output = await group.outputs.get_all_async()
 
     # Stop Block Group
     print("Joining Block Group")
@@ -42,7 +40,7 @@ async def main():
 
     # Check Output
     print("Checking Output")
-    print(f"First Output: {first_output['group_result'][1]} == True")
+    print(f"First Output: {first_output['group_result'][1]} == False")
 
 
 # Main #

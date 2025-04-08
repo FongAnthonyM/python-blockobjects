@@ -18,3 +18,4 @@ from .ioterminus import IOTerminus
 from .baseiomultiplexer import BaseIOMultiplexer
 from .ioforwarder import IOForwarder
 from .iowrapper import IOWrapper
+from .ioarbitratorwrapper import IOArbitratorWrapper

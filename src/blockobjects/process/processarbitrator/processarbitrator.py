@@ -14,10 +14,11 @@ __email__ = __email__
 # Imports #
 # Standard Libraries #
 from collections.abc import Iterable
+from inspect import isclass
 from typing import Any, ClassVar
 
 # Third-Party Packages #
-from baseobjects import search_sentinel
+from baseobjects import search_sentinel, BaseReducible
 from baseobjects.operations import iter_public_method_names
 
 # Local Packages #
@@ -28,7 +29,7 @@ from .arbitratemethod import arbitratemethod
 
 # Definitions #
 # Classes #
-class ProcessArbitrator(ContextualObjectInterface):
+class ProcessArbitrator(ContextualObjectInterface, BaseReducible):
     """A base class for creating objects which forward method calls to either the local or server copy of this object.
 
     This class provides a structured way to manage and forward method calls to server processes. It includes methods
@@ -72,6 +73,8 @@ class ProcessArbitrator(ContextualObjectInterface):
     _local_methods_: ClassVar[set[str]] = {
         "stop_server",
         "stop_server_async",
+        "set_proxy",
+        "set_proxy_async",
         "set_server_state",
         "set_server_state_async",
         "update",
@@ -105,7 +108,8 @@ class ProcessArbitrator(ContextualObjectInterface):
             method_names = set(name for name in parent.__dict__ if callable(getattr(parent, name, None)))
             method_names -= cls._unexposed_ | cls.unexposed | wrapped_methods
             public_methods = set(n for n in method_names if n[0] != "_") if cls.public_exposed else set()
-            check_methods = public_methods | (method_names & (cls.exposed | cls._exposed_))
+            manual_methods = method_names & (cls.exposed | cls._exposed_)
+            check_methods = public_methods | manual_methods
             local_methods = cls._local_methods_ | cls.local_methods
 
             for method_name in check_methods:
@@ -119,6 +123,8 @@ class ProcessArbitrator(ContextualObjectInterface):
                             case arbitratemethod():
                                 continue
                             case _:
+                                if isclass(func) and method_name not in manual_methods:
+                                    continue
                                 if method_name in local_methods:
                                     wrapper_method = "local_call"
                                 else:
@@ -174,11 +180,18 @@ class ProcessArbitrator(ContextualObjectInterface):
             state["_proxy_context"] = self._proxy_context
         return state
 
-    def __setstate__(self, state) -> dict[str, Any]:
-        """Builds this object based on a dictionary of corresponding attributes.
+    def __setstate__(self, state: Any) -> None:
+        """Sets the object's state from a pickled state.
+
+        By default, the state can be one of the following types with the corresponding behavior:
+            None: Will not set any state.
+            dict: Will set the __dict__ attribute to the state.
+            tuple[None, dict]: Will set the slot values to the second dict of the tuple.
+            tuple[dict, dict]: Will set the __dict__ attribute to the first dict of the tuple and set the slot values
+                to the second dict of the tuple.
 
         Args:
-            state: The attributes to build this object from.
+            state: An object which can be used to set the state of this object.
         """
         if state.get("_proxy", None) is None:
             state["_is_proxy"] = False
@@ -224,7 +237,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         Returns:
             True if this object is a proxy, False if this object is evaluating locally.
         """
-        return self._is_proxy if getattr(self, "_proxy", None) is None else True
+        return self._is_proxy if self._proxy is None else True
 
     def is_alive(self) -> bool:
         """Checks if the remote server is alive.
@@ -236,7 +249,7 @@ class ProcessArbitrator(ContextualObjectInterface):
 
     # Getters/Setters
     def get_attribute(self, name: str, default: Any = search_sentinel) -> Any:
-        """Get an attribute, artbitrated from either the local object or remote object.
+        """Get an attribute, arbitrated from either the local object or remote object.
 
         Args:
             name: The name of the attribute to get.
@@ -251,7 +264,7 @@ class ProcessArbitrator(ContextualObjectInterface):
             return getattr(self, name)
 
     async def get_attribute_async(self, name: str, default: Any = search_sentinel) -> Any:
-        """Asynchronously get an attribute, artbitrated from either the local object or remote object.
+        """Asynchronously get an attribute, arbitrated from either the local object or remote object.
 
         Args:
             name: The name of the attribute to get.
@@ -266,7 +279,7 @@ class ProcessArbitrator(ContextualObjectInterface):
             return getattr(self, name)
 
     def set_attribute(self, name: str, value: Any) -> None:
-        """Artbitrated setting of an attribute in either the local object or remote object.
+        """Arbitrated setting of an attribute in either the local object or remote object.
 
         Args:
             name: The name of the attribute to set.
@@ -275,7 +288,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         setattr(self, name, value)
 
     async def set_attribute_async(self, name: str, value: Any) -> None:
-        """Asynchronously artbitrated setting of an attribute in either the local object or remote object.
+        """Asynchronously arbitrated setting of an attribute in either the local object or remote object.
 
         Args:
             name: The name of the attribute to set.
@@ -284,7 +297,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         setattr(self, name, value)
 
     def _get_state(self, exclude: set | None = None) -> dict[str, Any]:
-        """Creates a dictionary of attributes, artbitrated from either the local object or remote object.
+        """Creates a dictionary of attributes, arbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -299,7 +312,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         return state
 
     def get_state(self, exclude: set | None = None) -> dict[str, Any]:
-        """Creates a dictionary of attributes, artbitrated from either the local object or remote object.
+        """Creates a dictionary of attributes, arbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -307,7 +320,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         return self._get_state(exclude)
 
     async def get_state_async(self, exclude: set | None = None) -> dict[str, Any]:
-        """Asynchronously, creates a dictionary of attributes, artbitrated from either the local object or remote object.
+        """Asynchronously, creates a dictionary of attributes, arbitrated from either the local object or remote object.
 
         Returns:
             A dictionary of this object's attributes.
@@ -315,7 +328,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         return self._get_state(exclude)
 
     def _set_state(self, state: dict[str, Any]) -> None:
-        """Artbitrated building of either the local object or remote object from dictionary of attributes.
+        """Arbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -323,7 +336,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         self.__setstate__(state)
 
     def set_state(self, state: dict[str, Any]) -> None:
-        """Artbitrated building of either the local object or remote object from dictionary of attributes.
+        """Arbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -331,7 +344,7 @@ class ProcessArbitrator(ContextualObjectInterface):
         self._set_state(state)
 
     async def set_state_async(self, state: dict[str, Any]) -> None:
-        """Asynchronously artbitrated building of either the local object or remote object from dictionary of attributes.
+        """Asynchronously arbitrated building of either the local object or remote object from dictionary of attributes.
 
         Args:
             state: The attributes to build this object from.
@@ -456,6 +469,7 @@ class ProcessArbitrator(ContextualObjectInterface):
 
         Args:
             update: Determines if this object should be updated from the server before stopping.
+            exclude: A set of attributes to exclude from the update.
         """
         if self.is_proxy():
             if (proxy := self._proxy) is not None and proxy._is_alive():
@@ -471,6 +485,7 @@ class ProcessArbitrator(ContextualObjectInterface):
 
         Args:
             update: Determines if this object should be updated from the server before stopping.
+            exclude: A set of attributes to exclude from the update.
         """
         if self.is_proxy():
             if (proxy := self._proxy) is not None and proxy._is_alive():
@@ -480,6 +495,45 @@ class ProcessArbitrator(ContextualObjectInterface):
                     await self._stop_server_async(update, exclude)
             else:
                 raise RuntimeError("Server process must be alive")
+
+    def set_proxy(self, proxy: ProxyInterface | None, inner: tuple[bool, ...] = (), update: bool = False) -> None:
+        """Sets the proxy for this object with the option to set a nested proxy.
+
+        Args:
+            proxy: An instance of ProxyInterface or None, representing the proxy to be set for the current instance.
+            inner: A tuple to specify a chain of nested proxies.
+            update: Determines if this object should be updated from the server before after setting the proxy.
+        """
+        if inner and inner[0]:
+            if (proxy := self._proxy) is not None and proxy._is_alive():
+                proxy.set_proxy(proxy, inner[1:], update)
+        else:
+            self._proxy = proxy
+            self._is_proxy = True if proxy is not None else False
+            if update:
+                self.update()
+
+    async def set_proxy_async(
+        self,
+        proxy: ProxyInterface | None,
+        inner: tuple[bool, ...] = (),
+        update: bool = False,
+    ) -> None:
+        """Asynchronously sets the proxy for this object with the option to set a nested proxy.
+
+        Args:
+            proxy: An instance of ProxyInterface or None, representing the proxy to be set for the current instance.
+            inner: A tuple to specify a chain of nested proxies.
+            update: Determines if this object should be updated from the server before after setting the proxy.
+        """
+        if inner and inner[0]:
+            if (proxy := self._proxy) is not None and proxy._is_alive():
+                await proxy.set_proxy_async(proxy, inner[1:], update)
+        else:
+            self._proxy = proxy
+            self._is_proxy = True if proxy is not None else False
+            if update:
+                await self.update_async()
 
     # Processing Context
     def get_proxy_context(self) -> BaseProcessingContext:

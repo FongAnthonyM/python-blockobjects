@@ -18,14 +18,14 @@ from multiprocessing.connection import Connection
 from typing import Any
 
 # Third-Party Packages #
-from baseobjects import BaseObject
+from baseobjects import BaseReducible
 
 # Local Packages #
 
 
 # Definitions #
 # Classes #
-class PipeFuture(BaseObject):
+class PipeFuture(BaseReducible):
     # Attributes #
     _sentinel: object = object()
     loop: AbstractEventLoop = get_event_loop()

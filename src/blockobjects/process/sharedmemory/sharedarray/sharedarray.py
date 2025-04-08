@@ -18,6 +18,7 @@ from multiprocessing.shared_memory import SharedMemory
 from typing import Any
 
 # Third-Party Packages #
+from baseobjects import BaseReducible
 from baseobjects.wrappers import StaticWrapper
 import numpy as np
 
@@ -26,7 +27,7 @@ import numpy as np
 
 # Definitions #
 # Classes #
-class SharedArray(StaticWrapper):
+class SharedArray(StaticWrapper, ):
     """A wrapper for a numpy ndarray which allocates it in SharedMemory.
 
     Class Attributes:

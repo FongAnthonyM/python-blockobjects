@@ -1,6 +1,8 @@
 """ iorouter.py
 An IO object which maps inputs to outputs.
 """
+from h5py.h5pl import append
+
 # Package Header #
 from ...header import *
 
@@ -24,7 +26,7 @@ from uuid import uuid4
 from weakref import WeakKeyDictionary, WeakSet, ReferenceType
 
 # Third-Party Packages #
-from baseobjects import SentinelObject, DEFAULTSENTINEL
+from baseobjects import SentinelObject, DEFAULTSENTINEL, BaseReducible
 from baseobjects.collections import OrderableDict, DeepChainMap
 from baseobjects.functions import MethodMultiplexer
 from baseobjects.objects import CallbackManager
@@ -47,7 +49,7 @@ async def _put_loading_async(put_method: Callable, callback: Task) -> None:
 
 
 # Classes #
-class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
+class IORouter(BaseIOMultiplexer, BaseCallbackRouting, BaseReducible):
     """An IO object which maps inputs to outputs, facilitating the routing of data between different IO objects.
 
     It supports synchronous and asynchronous operations, allowing for flexible data handling in various contexts.
@@ -104,8 +106,8 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
     def is_endpoint_link(cls, source: "IORouter", destination: "IORouter") -> bool:
         s_parent = source.parent
         d_parent = destination.parent
-        if (source is d_parent or 
-            destination is s_parent or 
+        if (source is d_parent or
+            destination is s_parent or
             (s_parent is not None and d_parent is not None and s_parent.parent is d_parent)
         ):
             return False
@@ -153,7 +155,7 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
 
     # Listening
     _is_listening: bool = True
-    listener_functions: dict[str, list[Callable, Callable]]
+    listener_functions: dict[str, [IOWrapper, IOWrapper]]
     scheduled_listener_links: set[tuple[int, str, int, str]]
     listeners: dict[str, Task]
 
@@ -1134,6 +1136,45 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
 
         return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
 
+    def create_io_wrapper_parent(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        io_ = self.create_io_wrapper(*args, **kwargs)
+        return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
+
+    def provide_io_wrapper(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        io_ = self.create_io_wrapper(*args, **kwargs)
+        if self.parent is not None:
+            return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
+        else:
+            return io_
+
+    async def provide_io_wrapper_async(
+        self,
+        key: str | int,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        io_ = self.create_io_wrapper(*args, **kwargs)
+        if self.parent is not None:
+            return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
+        else:
+            return io_
+
     # Linking
     def set_parent(self, io_: "IORouter") -> None:
         self._parent = ReferenceType(io_)
@@ -1158,8 +1199,7 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         e_kwargs: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> BaseIO:
-        io_ = self.create_io_wrapper(*args, **kwargs)
-        return self._parent().create_encapsulated_wrapper(key, io_, *e_args, **(e_kwargs or {}))
+        return self.create_io_wrapper_parent(key, *args, e_args=e_args, e_kwargs=e_kwargs, **kwargs)
 
     def link_forward(
         self,
@@ -1168,11 +1208,6 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         destination: str | None = None,
         *args: Any,
         encapsulate: bool = False,
-        as_listener: bool | None = None,
-        get: Callable | str = "get_item_async",
-        put: Callable | str = "put_item_async",
-        get_kwargs: dict[str, Any] | None = None,
-        put_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Establishes a forward link from this router to another IO object.
@@ -1205,30 +1240,12 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         if encapsulate:
             self.encapsulate_io(other)
 
-        if as_listener or (as_listener is None and self.is_listen_link(self, other)):
-            if isinstance(self.io_objects[source], IORouter):
-                self.create_io_listen_container(name=source)
-            if destination is None:
-                listener_name = f"{self.name}:{source}_to_{other.name}"
-                if isinstance(put, str) and "put_item_async":
-                    put = "put_async"
-            else:
-                listener_name = f"{self.name}:{source}_to_{other.name}:{destination}"
-            other.register_listener_router(
-                name=listener_name,
-                io_=self,
-                get=get,
-                put=put,
-                get_kwargs={"name":source} | (get_kwargs or {}),
-                put_kwargs={"name":destination} | (put_kwargs or {}),
-            )
-        else:
-            if destination is None:
-                self.io_objects[source] = other
-            elif other.parent is not None and (self.parent is not other.parent):
-                self.io_objects[source] = other.create_link_parent(key, destination, *args, **kwargs)
-            elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
-                self.io_objects[source] = d_io
+        if destination is None:
+            self.io_objects[source] = other
+        elif other.parent is not None and (self.parent is not other.parent):
+            self.io_objects[source] = other.create_link_parent(key, destination, *args, **kwargs)
+        elif (d_io := other.create_link(destination, *args, **kwargs)) is not None:
+            self.io_objects[source] = d_io
 
     def link_backward(
         self,
@@ -1237,11 +1254,6 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         destination: str | None = None,
         *args: Any,
         encapsulate: bool = False,
-        as_listener: bool | None = None,
-        get: Callable | str = "get_item_async",
-        put: Callable | str = "put_item_async",
-        get_kwargs: dict[str, Any] | None = None,
-        put_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         if other.io_objects.get(source, None) is None:
@@ -1256,30 +1268,12 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         if encapsulate:
             self.encapsulate_io(other)
 
-        if as_listener or (as_listener is None and self.is_listen_link(other, self)):
-            if isinstance(other.io_objects[source], IORouter):
-                other.create_io_listen_container(name=source)
-            if destination is None:
-                listener_name = f"{other.name}:{source}_to_{self.name}"
-                if isinstance(put, str) and "put_item_async":
-                    put = "put_async"
-            else:
-                listener_name = f"{other.name}:{source}_to_{self.name}:{destination}"
-            self.register_listener_router(
-                name=listener_name,
-                io_=other,
-                get=get,
-                put=put,
-                get_kwargs={"name": source} | (get_kwargs or {}),
-                put_kwargs={"name": destination} | (put_kwargs or {}),
-            )
-        else:
-            if destination is None:
-                other.io_objects[destination] = self
-            elif self.parent is not None and (self.parent is not other.parent):
-                other.io_objects[destination] = self.create_link_parent(key, source, *args, **kwargs)
-            elif (d_io := self.create_link(source, *args, **kwargs)) is not None:
-                other.io_objects[destination] = d_io
+        if destination is None:
+            other.io_objects[destination] = self
+        elif self.parent is not None and (self.parent is not other.parent):
+            other.io_objects[destination] = self.create_link_parent(key, source, *args, **kwargs)
+        elif (d_io := self.create_link(source, *args, **kwargs)) is not None:
+            other.io_objects[destination] = d_io
 
     def get_links_from(self) -> dict[tuple[int, str, int, str], "IORouter"]:
         return self.links_from
@@ -1325,28 +1319,6 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         return endpoints
 
     # Listening
-    def register_listener(self, name: str, get: Callable | str, put: Callable, get_kwargs: dict[str, Any]) -> None:
-        if isinstance(put, str):
-            put = partial(getattr(self, put), **get_kwargs)
-
-        self.listener_functions[name] = [get, put]
-
-    def register_listener_router(
-        self,
-        name: str,
-        io_: "IORouter",
-        get: str,
-        put: Callable | str,
-        get_kwargs: dict[str, Any],
-        put_kwargs: dict[str, Any],
-    ) -> None:
-        if isinstance(put, str):
-            put = partial(getattr(self, put), **put_kwargs)
-
-        get = partial(getattr(io_, get), **get_kwargs)
-
-        self.listener_functions[name] = [get, put]
-
     def create_io_listen_container(
         self,
         name: str,
@@ -1358,6 +1330,64 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
             type_ = self.default_io_listen_container_type
 
         self.io_objects[name] = type_(*args, **kwargs)
+
+    async def create_io_listen_container_async(
+        self,
+        name: str,
+        type_: type[BaseIO] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if type_ is None:
+            type_ = self.default_io_listen_container_type
+
+        self.io_objects[name] = type_(*args, **kwargs)
+
+    def register_listener_link_from(
+        self,
+        other: "IORouter",
+        source: str,
+        destination: str | None = None,
+        create_container: bool = True,
+    ) -> None:
+        name = f"{other.name}:{source}_to_{self.name}{f':{destination}' if destination else ''}"
+
+        if create_container:
+            other.create_io_listen_container(name=source)
+
+        self.listener_functions[name] = [
+            other.provide_io_wrapper(name, source),
+            self.provide_io_wrapper(name, destination)
+        ]
+
+    async def register_listener_link_from_async(
+        self,
+        other: "IORouter",
+        source: str,
+        destination: str | None = None,
+        create_container: bool = True,
+    ) -> None:
+        name = f"{other.name}:{source}_to_{self.name}{f':{destination}' if destination else ''}"
+
+        if create_container:
+            await other.create_io_listen_container_async(name=source)
+
+        self.listener_functions[name] = list(await gather(
+            other.provide_io_wrapper_async(name, source),
+            self.provide_io_wrapper_async(name, destination),
+        ))
+
+    def register_listener_links(self):
+        for key, other in self.links_from.items():
+            if self.is_listen_link(other, self):
+                self.register_listener_link_from(other, key[1], key[3])
+
+    async def register_listener_links_async(self):
+        coros = deque()
+        for key, other in self.links_from.items():
+            if self.is_listen_link(other, self):
+                coros.append(self.register_listener_link_from_async(other, key[1], key[3]))
+        await gather(*coros)
 
     async def listen_get_put_functions_async(self, get: Callable, put: Callable) -> None:
         """Asynchronously listens for data from a get function and forwards it to a put function.
@@ -1373,9 +1403,10 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting):
         if not self._is_listening:
             self._is_listening = True
 
-        for name, (put, get) in self.listener_functions.items():
+        for name, (get, put) in self.listener_functions.items():
             if name not in self.listeners:
-                self.listeners[name] = task = create_task(self.listen_get_put_functions_async(get, put))
+                task = create_task(self.listen_get_put_functions_async(get.getter_async, put.putter_async))
+                self.listeners[name] = task
                 task.add_done_callback(partial(self._remove_listener, name=name))
 
     async def start_listeners_async(self) -> None:

@@ -23,6 +23,7 @@ from time import perf_counter
 from typing import ClassVar, Any
 
 # Third-Party Packages #
+from baseobjects import BaseReducible
 from baseobjects import search_sentinel
 
 # Local Packages #
@@ -32,7 +33,7 @@ from ..synchronize import MultiProcessingInterrupt
 
 # Definitions #
 # Classes #
-class MultiProcessingQueue(Queue, QueueInterface):
+class MultiProcessingQueue(Queue, QueueInterface, BaseReducible):
     """Extends the multiprocessing Queue by adding async methods and interrupts for blocking methods.
 
     Class Attributes:

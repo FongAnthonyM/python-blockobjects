@@ -20,7 +20,7 @@ from time import perf_counter
 from typing import ClassVar, Any
 
 # Third-Party Packages #
-from baseobjects import BaseObject, search_sentinel
+from baseobjects import BaseReducible, search_sentinel
 
 # Local Packages #
 from .synchronize import MultiProcessingInterrupt
@@ -28,7 +28,7 @@ from .synchronize import MultiProcessingInterrupt
 
 # Definitions #
 # Classes #
-class Process(BaseObject):
+class Process(BaseReducible):
     """A wrapper for a multiprocessing Process which mimics multiple run functionality.
 
     Process is a wrapper for multiprocessing Process instance where the process target and specifications are held in

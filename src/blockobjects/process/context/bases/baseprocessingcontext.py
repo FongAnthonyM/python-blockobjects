@@ -17,7 +17,7 @@ from typing import Any
 from weakref import ref, WeakValueDictionary
 
 # Third-Party Packages #
-from baseobjects import BaseObject
+from baseobjects import BaseReducible
 
 # Local Packages #
 from ...interfaces import LockInterface, EventInterface, QueueInterface, ProxyInterface
@@ -25,7 +25,7 @@ from ...interfaces import LockInterface, EventInterface, QueueInterface, ProxyIn
 
 # Definitions #
 # Classes #
-class BaseProcessingContext(BaseObject):
+class BaseProcessingContext(BaseReducible):
     """A multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
 
     Attributes:

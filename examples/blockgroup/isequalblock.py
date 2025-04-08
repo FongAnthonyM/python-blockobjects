@@ -94,7 +94,7 @@ class IsEqualBlock(BaseBlock):
         Returns:
             The boolean if all values are the same.
         """
-        return np.all(data[0])
+        return np.all(data)
 
     def unique(self, data: np.ndarray) -> bool:
         """Checks if all the values in data are unique.

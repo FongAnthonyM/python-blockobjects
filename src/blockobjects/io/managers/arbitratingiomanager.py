@@ -13,6 +13,8 @@ __email__ = __email__
 
 # Imports #
 # Standard Libraries #
+from collections.abc import Iterable, MutableMapping
+from functools import partial
 from typing import ClassVar, Any
 
 # Third-Party Packages #
@@ -21,6 +23,7 @@ from baseobjects import BaseMethod
 from ...process import ProcessArbitrator, arbitratemethod
 
 # Local Packages #
+from ..base import BaseIO, IOWrapper
 from .contextualiomanager import ContextualIOManager
 
 
@@ -51,6 +54,8 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
         "is_endpoint_link",
         "is_listen_link",
         "default_io_type",
+        "create_io_wrapper",
+        "create_encapsulated_proxy_wrapper",
     }
     local_methods: ClassVar[set] = {
         "create_io_wrapper",
@@ -58,6 +63,9 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
         "link_backward",
         "update_server_io",
         "update_server_io_async",
+        "create_io_wrapper_parent",
+        "provide_io_wrapper",
+        "provide_io_wrapper_async",
     }
 
     default_get: ClassVar[str] = "get_groups"
@@ -85,6 +93,89 @@ class ArbitratingIOManager(ContextualIOManager, ProcessArbitrator):
                     del state[name]
 
         return state
+
+    # Wrapper
+    def create_io_wrapper(self, name: str, *args: Any, **kwargs: Any) -> IOWrapper:
+        obj = self._proxy or self
+
+        getter = None if self.wrapped_getter is None else partial(getattr(obj, self.wrapped_getter), name)
+        if self.wrapped_getter_async is None:
+            getter_async = None
+        else:
+            getter_async = partial(getattr(obj, self.wrapped_getter_async), name)
+
+        putter = None if self.wrapped_putter is None else partial(getattr(obj, self.wrapped_putter), name)
+        if self.wrapped_putter_async is None:
+            putter_async = None
+        else:
+            putter_async = partial(getattr(obj, self.wrapped_putter_async), name)
+
+        return IOWrapper(getter, getter_async, putter, putter_async)
+
+    def set_encapsulated_wrapper(self, key, *args: Any, **kwargs: Any) -> None:
+        self.encapsulated_wrappers[key] = self.create_io_wrapper(*args, **kwargs)
+
+    async def set_encapsulated_wrapper_async(self, key, *args: Any, **kwargs: Any) -> None:
+        self.encapsulated_wrappers[key] = self.create_io_wrapper(*args, **kwargs)
+
+    def create_encapsulated_proxy_wrapper(self, key, proxy, *args, **kwargs) -> IOWrapper:
+        getter = partial(proxy.encapsulated_get, key, *args, **kwargs)
+        getter_async = partial(proxy.encapsulated_get_async, key, *args, **kwargs)
+        putter = partial(proxy.encapsulated_put, key, *args, **kwargs)
+        putter_async = partial(proxy.encapsulated_put_async, key, *args, **kwargs)
+        joiner = partial(proxy.encapsulated_join, key, *args, **kwargs)
+        joiner_async = partial(proxy.encapsulated_join_async, key, *args, **kwargs)
+
+        return IOWrapper(getter, getter_async, putter, putter_async, joiner, joiner_async)
+
+    def create_io_wrapper_parent(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        if (proxy := self._proxy) is not None:
+            self.set_encapsulated_wrapper(key, *args, **kwargs)
+            return self.create_encapsulated_proxy_wrapper(key, proxy, *e_args, **(e_kwargs or {}))
+        else:
+            return super().create_io_wrapper_parent(key, *args, e_args=e_args, e_kwargs=e_kwargs, **kwargs)
+
+    def provide_io_wrapper(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        if (proxy := self._proxy) is not None:
+            if self.parent is not None:
+                self.set_encapsulated_wrapper(key, *args, **kwargs)
+                return self.create_encapsulated_proxy_wrapper(key, proxy, *e_args, **(e_kwargs or {}))
+            else:
+                return self.create_io_wrapper(*args, **kwargs)
+        else:
+            return super().provide_io_wrapper(key, *args, e_args=e_args, e_kwargs=e_kwargs, **kwargs)
+
+    async def provide_io_wrapper_async(
+        self,
+        key,
+        *args: Any,
+        e_args: Iterable[Any, ...] = (),
+        e_kwargs: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BaseIO:
+        if (proxy := self._proxy) is not None:
+            if self.parent is not None:
+                await self.set_encapsulated_wrapper_async(key, *args, **kwargs)
+                return self.create_encapsulated_proxy_wrapper(key, proxy, *e_args, **(e_kwargs or {}))
+            else:
+                return self.create_io_wrapper(*args, **kwargs)
+        else:
+            return await super().provide_io_wrapper_async(key, *args, e_args=e_args, e_kwargs=e_kwargs, **kwargs)
+
 
     # Linking
     def is_remote(self) -> bool:

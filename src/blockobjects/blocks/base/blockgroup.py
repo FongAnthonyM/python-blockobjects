@@ -70,16 +70,20 @@ class BlockGroup(BaseBlock):
     """
     # Class Attributes #
     exposed: ClassVar[set] = BaseBlock.exposed | {
-        "create_blocks",
-        "create_blocks_async",
-        "link_inner_io",
-        "link_inner_io_async",
+        "get_inner_proxies",
+        "get_inner_proxies_async",
+        "update_inner_proxies",
+        "update_inner_proxies_async",
+        "update_inner_io_proxies",
+        "update_inner_io_proxies_async",
         "build_arbitrated_inputs",
         "build_arbitrated_inputs_async",
         "get_arbitrated_io",
         "get_arbitrated_io_async",
         "put_arbitrated_io",
         "put_arbitrated_io_async",
+        "start_inner_proxies",
+        "start_inner_proxies_async",
     }
 
     _default_input_signal_names: ClassVar[tuple[str, ...]] = ("stop_flag", "inner_stop_flag")
@@ -95,8 +99,6 @@ class BlockGroup(BaseBlock):
         "inner_stop_callback": {"method": "inner_stop_signal", "signals": ("inner_stop_flag",)},
     }
 
-    sets_up_blocks: bool = True
-    sets_up_inner_io: bool = True
     sets_up_inner_io_links: bool = True
     lazy_inner_io: bool = True
     lazy_finalize: bool = True
@@ -223,47 +225,23 @@ class BlockGroup(BaseBlock):
             self.create_links_kwargs.update(link_kwargs)
 
         if _state is None and (init_blocks or (init_blocks is None and self.init_blocks)):
-            self.setup_blocks(**self.create_blocks_kwargs)
+            self.create_blocks(**self.create_blocks_kwargs)
 
         if _state is None and (init_io_links or (init_io_links is None and self.init_io_links)):
-            self.setup_inner_io_links(**self.create_links_kwargs)
+            self.link_inner_io(**self.create_links_kwargs)
 
         if _state is None and (init_setup or (init_setup is None and self.init_setup)):
             self.setup(**({} if setup_kwargs is None else setup_kwargs))
 
     # Blocks
     def create_blocks(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        """Creates the inner blockgroup.
+        """Creates the inner blocks.
 
         Args:
-            *args: The arguments for creating the inner blockgroup.
-            override: Determines if the inner blockgroup will be overridden.
-            **kwargs: The keyword arguments for creating the inner blockgroup.
+            *args: The arguments for creating the inner blocks.
+            override: Determines if the inner blocks will be overridden.
+            **kwargs: The keyword arguments for creating the inner blocks.
         """
-
-    async def create_blocks_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        return self.create_blocks(*args, override=override, **kwargs)
-
-    def setup_blocks(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_blocks:
-            self.create_blocks(*args, **kwargs)
-            self.sets_up_blocks = False
-        self.setup_inner_blocks()
-
-    async def setup_blocks_async(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_blocks:
-            await self.create_blocks_async(*args, **kwargs)
-            self.sets_up_blocks = False
-        await self.setup_inner_blocks_async()
-
-    def setup_inner_blocks(self) -> None:
-        for block in self.blocks.values():
-            if (setup_blocks := getattr(block, "setup_blocks", None)) is not None:
-                setup_blocks()
-
-    async def setup_inner_blocks_async(self) -> None:
-        sb_ms = (sb_m() for b in self.blocks.values() if (sb_m := getattr(b, "setup_blocks_async", None)) is not None)
-        await gather(*sb_ms)
 
     def start_blocks(self) -> None:
         for block in self.blocks.values():
@@ -285,19 +263,6 @@ class BlockGroup(BaseBlock):
             **kwargs: The keyword arguments for creating the inner blockgroup.
         """
 
-    async def build_inner_io_async(self, *args: Any, override: bool = False, **kwargs: Any) -> None:
-        return self.build_inner_io(*args, override=override, **kwargs)
-
-    def setup_inner_io(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_inner_io:
-            self.build_inner_io(*args, **kwargs)
-            self.sets_up_inner_io = False
-
-    async def setup_inner_io_async(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_inner_io:
-            await self.build_inner_io_async(*args, **kwargs)
-            self.sets_up_inner_io = False
-
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
         """Links the inner blockgroup' IO.
 
@@ -305,19 +270,6 @@ class BlockGroup(BaseBlock):
             *args: The arguments for creating linking the inner blockgroup' IO.
             **kwargs: The keyword arguments for creating linking the inner blockgroup' IO.
         """
-
-    async def link_inner_io_async(self, *args: Any, **kwargs: Any) -> Any:
-        return self.link_inner_io(*args, **kwargs)
-
-    def setup_inner_io_links(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_inner_io_links:
-            self.link_inner_io(*args, **kwargs)
-            self.sets_up_inner_io_links = False
-
-    async def setup_inner_io_links_async(self, *args: Any, **kwargs: Any) -> None:
-        if self.sets_up_inner_io_links:
-            await self.link_inner_io_async(*args, **kwargs)
-            self.sets_up_inner_io_links = False
 
     def get_inner_io_id(self) -> dict[int, IORouter]:
         io_ = {}
@@ -335,34 +287,6 @@ class BlockGroup(BaseBlock):
             coros.append(block.outputs.get_id_number_async())
             ids.append(block.outputs)
         return dict(zip(await gather(*coros), ids))
-
-    def start_inner_inputs(self) -> None:
-        for block in self.blocks.values():
-            block.start_inputs()
-
-    async def start_inner_inputs_async(self) -> None:
-        await gather(*(block.start_inputs_async() for block in self.blocks.values()))
-
-    def start_inner_outputs(self) -> None:
-        for block in self.blocks.values():
-            block.start_outputs()
-
-    async def start_inner_outputs_async(self) -> None:
-        await gather(*(block.start_outputs_async() for block in self.blocks.values()))
-
-    def start_inner_io(self) -> None:
-        for block in self.blocks.values():
-            block.start_io()
-
-    async def start_inner_io_async(self) -> None:
-        await gather(*(block.start_io_async() for block in self.blocks.values()))
-
-    def actualize_inner_io(self) -> None:
-        for block in self.blocks.values():
-            block.actualize_io()
-
-    async def actualize_inner_io_async(self) -> None:
-        await gather(*(block.actualize_io_async() for block in self.blocks.values()))
 
     def _build_inner_arbitrated_io(self, io_router: IORouter, inner_io: dict[int, IORouter]) -> None:
         for key, other in io_router.get_links_to().items():
@@ -488,58 +412,97 @@ class BlockGroup(BaseBlock):
         await self.build_arbitrated_inputs_async()
         await self.set_arbitrated_input_links_async()
 
+    def get_inner_proxies(self) -> dict[str, Any]:
+        return {n: b.get_proxy() for n, b in self.blocks.items() if b.is_alive()}
+
+    async def get_inner_proxies_async(self) -> dict[str, Any]:
+        return {n: b.get_proxy() for n, b in self.blocks.items() if b.is_alive()}
+
+    def get_proxies(self) -> dict[str, Any]:
+        proxies = super().get_proxies()
+        proxies["inner"] = self.get_inner_proxies()
+        return proxies
+
+    async def get_proxies_async(self) -> dict[str, Any]:
+        proxies = await super().get_proxies_async()
+        proxies["inner"] = await self.get_inner_proxies_async()
+        return proxies
+
+    def set_inner_proxies(self, proxies: dict[str, Any]) -> None:
+        for name, proxies in proxies.items():
+            self.blocks[name].set_proxies(proxies)
+
+    async def set_inner_proxies_async(self, proxies: dict[str, Any]) -> None:
+        await gather(*(self.blocks[n].set_proxies_async(p) for n, p in proxies.items()))
+
+    def set_proxies(self, proxies: dict[str, Any]) -> None:
+        super().set_proxies(proxies)
+        self.set_inner_proxies(proxies["inner"])
+
+    async def set_proxies_async(self, proxies: dict[str, Any]) -> None:
+        await gather(super().set_proxies_async(proxies), self.set_inner_proxies_async(proxies["inner"]))
+
+    def update_inner_proxies(self) -> dict[str, Any]:
+        return {n: b.update_proxies() for n, b in self.blocks.items() if b.is_alive()}
+
+    async def update_inner_proxies_async(self) -> dict[str, Any]:
+        names = tuple(self.blocks.keys())
+        coro_iter = (self.blocks[n].update_proxies_async() for n in names if self.blocks[n].is_alive())
+        return dict(zip(names, await gather(*coro_iter)))
+
+    def update_proxies(self) -> dict[str, Any]:
+        proxies = super().get_proxies()
+        inner_proxies = self.update_inner_proxies()
+        self.set_inner_proxies(inner_proxies)
+        proxies["inner"] = inner_proxies
+        return proxies
+
+    async def update_proxies_async(self) -> dict[str, Any]:
+        proxies = await super().update_proxies_async()
+        inner_proxies = await self.update_inner_proxies_async()
+        await self.set_inner_proxies_async(inner_proxies)
+        proxies["inner"] = inner_proxies
+        return proxies
+
+    def update_inner_io_proxies(self) -> None:
+        """Updates both the inner inputs' and outputs' proxies to match the current state."""
+        for block in self.blocks.values():
+            block.update_io_proxies()
+
+    async def update_inner_io_proxies_async(self) -> None:
+        """Asynchronously updates both the inner inputs' and outputs' proxies to match the current state.'"""
+        if self.blocks:
+            await gather(*(b.update_io_proxies_async() for b in self.blocks.values()))
+
+    def update_io_proxies(self) -> None:
+        """Updates both the inputs' and outputs' proxies to match the current state."""
+        super().update_io_proxies()
+        self.update_inner_io_proxies()
+
+    async def update_io_proxies_async(self) -> None:
+        """Asynchronously updates both the inputs' and outputs' proxies to match the current state.'"""
+        await gather(super().update_io_proxies_async(), self.update_inner_io_proxies_async())
+
+    def finalize_inner_io(self) -> None:
+        for block in self.blocks.values():
+            block.finalize_io()
+
+    async def finalize_inner_io_async(self) -> None:
+        if self.blocks:
+            await gather(*(b.finalize_io_async() for b in self.blocks.values()))
+
     def finalize_io(self) -> None:
+        """Finalizes the inputs and outputs before starting the block."""
         self.correct_input_links()
-        self.set_input_link()
-        self.set_signal_links()
-        self.inputs.start_listeners()
-        self.outputs.start_listeners()
+        self.finalize_inner_io()
+        super().finalize_io()
 
     async def finalize_io_async(self) -> None:
+        """Asynchronously finalizes the inputs and outputs before starting the block."""
         if self.is_alive():
             await self.correct_input_links_async()
-        await self.set_input_link_async()
-        await self.set_signal_links_async()
-        await self.inputs.start_listeners_async()
-        await self.outputs.start_listeners_async()
-
-    def actualize_io(self) -> None:
-        if self.actualize_io_:
-            if self.inputs.is_proxy():
-                self.inputs.update()
-            if self.outputs.is_proxy():
-                self.outputs.update()
-
-            self.setup_inner_io()
-            self.setup_inner_io_links()
-            self.start_inner_io()
-            self.actualize_inner_io()
-
-            if self.inputs.is_proxy():
-                self.inputs.update_server_io()
-            if self.outputs.is_proxy():
-                self.outputs.update_server_io()
-
-            self.actualize_io_ = False
-
-    async def actualize_io_async(self) -> None:
-        if self.actualize_io_:
-            if self.inputs.is_proxy():
-                await self.inputs.update_async()
-            if self.outputs.is_proxy():
-                await self.outputs.update_async()
-
-            await self.setup_inner_io_async()
-            await self.setup_inner_io_links_async()
-            await self.start_inner_io_async()
-            await self.actualize_inner_io_async()
-
-            if self.inputs.is_proxy():
-                await self.inputs.update_server_io_async()
-            if self.outputs.is_proxy():
-                await self.outputs.update_server_io_async()
-
-            self.actualize_io_ = False
+        await self.finalize_inner_io_async()
+        await super().finalize_io_async()
 
     # Signals
     def stop_signal(self, stop_flag: bool) -> None:
@@ -569,6 +532,84 @@ class BlockGroup(BaseBlock):
         """
         raise NotImplementedError
 
+    # Start Proxy
+    def start_inner_proxies(self, update_local: bool = False, update_io: bool = False) -> None:
+        for block in self.blocks.values():
+            if block.will_proxy:
+                block.start_proxy(update_local=update_local, update_io=update_io)
+
+    async def start_inner_proxies_async(self, update_local: bool = False, update_io: bool = False) -> None:
+        coros = deque()
+        for block in self.blocks.values():
+            if block.will_proxy:
+                coros.append(block.start_proxy_async(update_local=update_local, update_io=update_io))
+        await gather(*coros)
+
+    def start_proxy(self, as_proxy: bool | None = None, update_local: bool = True, update_io: bool = True) -> None:
+        """Starts the proxy server for this block.
+
+        Args:
+            update_local: Determines if the local objects' proxies will be updated from the other proxies.
+            update_io: Determines if the IO should be updated.
+        """
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            # Start proxy servers
+            self.start_outputs()
+            self._start_server()
+            self.start_inputs()
+            # Set the inputs proxy on this object's proxy
+            self.set_inputs_proxy(self.inputs._proxy)
+            # Finalize IO
+            self.finalize_io()
+
+        # Start Inner Proxies
+        self.start_inner_proxies()
+
+        # Update Proxy References
+        if update_local:
+            # Cascade update all the proxies so they have the references/links to the other proxies.
+            self.update_proxies()
+
+        # Update IO
+        if update_io:
+            # Cascade update all the IO objects so they have the references/link to the other proxies.
+            self.update_io_proxies()
+
+    async def start_proxy_async(
+        self,
+        as_proxy: bool | None = None,
+        update_local: bool = True,
+        update_io: bool = True,
+    ) -> None:
+        """Asynchronously starts the proxy server for this block.
+
+        Args:
+            update_local: Determines if the local objects' proxies will be updated from the other proxies.
+            update_io: Determines if the IO should be updated.
+        """
+        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
+            # Start proxy servers
+            self.start_outputs()
+            self._start_server()
+            self.start_inputs()
+            # Set the inputs proxy on this object's proxy
+            await self.set_inputs_proxy_async(self.inputs._proxy)
+            # Finalize IO
+            await self.finalize_io_async()
+
+        # Start Inner Proxies
+        await self.start_inner_proxies_async()
+
+        # Update Proxy References
+        if update_local:
+            # Cascade update all the proxies so they have the references/links to the other proxies.
+            await self.update_proxies_async()
+
+        # Update IO
+        if update_io:
+            # Cascade update all the IO objects so they have the references/link to the other proxies.
+            await self.update_io_proxies_async()
+
     # Start
     async def _start_async(self, s_kwargs: dict[str, Any] | None = None) -> None:
         """Starts the continuous execution of the block.
@@ -585,79 +626,7 @@ class BlockGroup(BaseBlock):
         if self.will_evaluate:
             await gather(*(block.ensure_setup_async() for block in self.blocks.values()))
         else:
-            await gather(*(block.start_async() for block in self.blocks.values()))
-
-    def start(
-        self,
-        as_proxy: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        finalize: bool = True,
-    ) -> None:
-        """Starts the continuous execution of the block, arbitrating to another process if selected.
-
-        Args:
-            as_proxy: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for block setup.
-        """
-        # Raise Error if the task is already running.
-        if self.is_executing():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Setup IO and Start Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
-            self.setup_blocks()
-            self.start_io()
-            self.actualize_io()
-            self._start_server()
-            self.finalize_io()
-        else:
-            self.setup_blocks()
-            self.actualize_io()
-            if finalize:
-                self.finalize_io()
-
-        # Use Correct Context
-        if self.is_alive():
-            self._proxy.start(None, s_kwargs, False)
-        elif (loop := self.async_event_loop) is not None:
-            run_coroutine_threadsafe(self._start_async(s_kwargs), loop)
-        else:
-            self._start_async_loop(s_kwargs)
-
-    async def start_async(
-        self,
-        as_proxy: bool | None = None,
-        s_kwargs: dict[str, Any] | None = None,
-        finalize: bool = True,
-    ) -> None:
-        """Asynchronously starts the continuous execution of the block, arbitrating to another process if selected.
-
-        Args:
-            as_proxy: Determines if this object should run in a separate process.
-            s_kwargs: The keyword arguments for block setup.
-        """
-        # Raise Error if the task is already running.
-        if self.is_executing():
-            raise RuntimeError(f"{self} task is already running.")
-
-        # Setup IO and Start Proxy
-        if as_proxy or (as_proxy is None and self.will_proxy) and not self.is_alive():
-            await self.setup_blocks_async()
-            await self.start_io_async()
-            await self.actualize_io_async()
-            self._start_server()
-            await self.finalize_io_async()
-        else:
-            await self.setup_blocks_async()
-            await self.actualize_io_async()
-            if finalize:
-                await self.finalize_io_async()
-
-        # Use Correct Context
-        if self.is_alive():
-            await self._proxy.start_async(None, s_kwargs, False)
-        else:
-            await self._start_async(s_kwargs)
+            await gather(*(block.start_async(finalize=False) for block in self.blocks.values()))
 
     # Stop Block Execution
     async def _stop_block_async(

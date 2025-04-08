@@ -3,11 +3,13 @@ A Block which generates a random array then finds the sum of the array twice and
 """
 # Imports #
 # Standard Libraries #
+from itertools import chain
 from typing import ClassVar, Any, Iterable
 
 # Third-Party Packages #
 from blockobjects import BlockGroup
-from blockobjects.io import IORouter, IOQueue, IOContextualQueue
+from blockobjects.io import IORouter, IOQueue, IdentifiedItem
+import numpy as np
 
 # Local Packages #
 from .rngblock import RNGBlock
@@ -18,6 +20,24 @@ from .isequalblock import IsEqualBlock
 # Definitions #
 # Functions #
 # These Functions are routing functions which facilitate how IO is routed during callback
+def as_np_array(inputs: dict[str, Any]) -> Any:
+    ids = []
+    values = []
+    for item in inputs.values():
+        ids.append(item.ids)
+        values.append(item.item)
+    return IdentifiedItem(ids=tuple(chain.from_iterable(ids)), item=np.asarray(values))
+
+
+async def as_np_array_async(inputs: dict[str, Any]) -> Any:
+    ids = []
+    values = []
+    for item in inputs.values():
+        ids.append(item.ids)
+        values.append(item.item)
+    return IdentifiedItem(ids=tuple(chain.from_iterable(ids)), item=np.asarray(values))
+
+
 def bool_and(inputs: dict[str, Any]) -> Any:
     return all(inputs.values())
 
@@ -47,11 +67,13 @@ class ExampleBlockGroup(BlockGroup):
             override: Determines if the inner blockgroup will be overridden.
             **kwargs: The keyword arguments for creating the inner blockgroup.
         """
+        will_proxy = True
+
         # Create Blocks
-        self.blocks["generator"] = RNGBlock(shape=shape, evaluation_limit=2, name="generator")
-        self.blocks["sum_1"] = SumBlock(name="sum_1")
-        self.blocks["sum_2"] = SumBlock(name="sum_2")
-        self.blocks["checker"] = IsEqualBlock(equals_method="unique", name="checker")
+        self.blocks["generator"] = RNGBlock(shape=shape, evaluation_limit=2, name="generator", will_proxy=will_proxy)
+        self.blocks["sum_1"] = SumBlock(name="sum_1", will_proxy=will_proxy)
+        self.blocks["sum_2"] = SumBlock(name="sum_2", will_proxy=will_proxy)
+        self.blocks["checker"] = IsEqualBlock(equals_method="unique", name="checker", will_proxy=will_proxy)
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:
@@ -79,8 +101,20 @@ class ExampleBlockGroup(BlockGroup):
         generator_router.link_forward("sum_2", sum_2.inputs, "data")  # Link the router to the sum block.
 
         # Aggregate the sum outputs to a single IO and send to the checker.
-        sum_1.outputs.link_forward("out_number", checker.inputs, "data")
-        sum_2.outputs.link_forward("out_number", checker.inputs, "data")
+        check_signal_router = IORouter(name="check_signal_gate")
+        check_signal_router.create_ios(("sum_1", "sum_2"), group="inputs", type_=IOQueue)
+        check_signal_router.create_io("data", group="outputs")
+        check_signal_router.create_groups_to_io_callback(
+            groups="inputs",
+            io_name="data",
+            callback=as_np_array,
+            callback_async=as_np_array_async,
+        )
+        checker.inputs.encapsulate_io(check_signal_router)
+
+        sum_1.outputs.link_forward("out_number", check_signal_router, "sum_1")
+        sum_2.outputs.link_forward("out_number", check_signal_router, "sum_2")
+        check_signal_router.link_forward("data", checker.inputs, "data")
 
         # Group Outputs
         checker.outputs.link_forward("result", self.outputs, "group_result")  # Can link the IO of single IO items.
