@@ -168,7 +168,7 @@ class ArrayReducer(BaseObject):
         return func, args
 
     @staticmethod
-    def rebuild_array(shared_memory_type: type[SharedMemory], name: str, shape: Iterable, dtype: Any) -> ndarray:
+    def rebuild_array(shared_memory_type: type[SharedMemory], name: str | None, shape: Iterable, dtype: Any) -> ndarray:
         """Reconstructs a numpy array from shared memory.
 
         This method retrieves a shared memory block, reconstructs a numpy array using the provided shape and datatype,
