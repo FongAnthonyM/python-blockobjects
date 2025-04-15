@@ -40,7 +40,7 @@ async def main():
 
     # Check Output
     print("Checking Output")
-    print(f"First Output: {first_output['group_result'][1]} == False")
+    print(f"First Output: {first_output['group_result'][1]} == True")
 
 
 # Main #

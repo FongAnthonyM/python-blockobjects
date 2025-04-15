@@ -1,14 +1,15 @@
 """ sharedarray.py
 A wrapper for a numpy ndarray which allocates it in SharedMemory.
 """
-# Package Header #
-from ....header import *
-
 # Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
+__package_name__ = "blockobjects"
+
+__author__ = "Anthony Fong"
+__credits__ = ["Anthony Fong"]
+__copyright__ = "Copyright 2022, Anthony Fong"
+__license__ = "MIT"
+
+__version__ = "0.1.0"
 
 
 # Imports #
@@ -16,6 +17,7 @@ __email__ = __email__
 from collections.abc import Iterable, Mapping
 from multiprocessing.shared_memory import SharedMemory
 from typing import Any
+from warnings import warn
 
 # Third-Party Packages #
 from baseobjects import BaseReducible
@@ -27,7 +29,7 @@ import numpy as np
 
 # Definitions #
 # Classes #
-class SharedArray(StaticWrapper, ):
+class SharedArray(StaticWrapper, BaseReducible):
     """A wrapper for a numpy ndarray which allocates it in SharedMemory.
 
     Class Attributes:
@@ -46,6 +48,9 @@ class SharedArray(StaticWrapper, ):
         offset: The offset of array data in the buffer.
         strides: The strides of data in memory
         order: Row-major (C-style) or column-major (Fortran-style) order.
+        override: Determines if the existing data in a loaded SharedMemory should be replaced with the new data.
+        load_only: Determines if the array should be loaded from the SharedMemory. If True, the array will be loaded
+            from the SharedMemory but not created.
         init: Determines if this object should be initialized.
     """
 
@@ -53,6 +58,10 @@ class SharedArray(StaticWrapper, ):
     _wrap_attributes: list[str] = ["array"]
     _exclude_attributes: set[str] = StaticWrapper._exclude_attributes | {"__array_ufunc__"}
     shared_memory_type: type[SharedMemory] = SharedMemory
+
+    _offset: int = 0
+    _array: np.ndarray | None = None
+    _shared_memory: SharedMemory | None = None
 
     # Magic Methods #
     # Construction/Destruction
@@ -65,13 +74,11 @@ class SharedArray(StaticWrapper, ):
         offset: int = 0,
         strides: Iterable[int, ...] | None = None,
         order: str | None = None,
+        override: bool = False,
+        *,
+        load_only: bool = False,
         init: bool = True,
     ) -> None:
-        # New Attributes #
-        self._offset: int = 0
-        self._array: np.ndarray | None = None
-        self._shared_memory: SharedMemory | None = None
-
         # Parent Attributes #
         super().__init__(init=False)
 
@@ -85,6 +92,8 @@ class SharedArray(StaticWrapper, ):
                 offset=offset,
                 strides=strides,
                 order=order,
+                override=override,
+                load_only=load_only
             )
 
     @property
@@ -164,6 +173,9 @@ class SharedArray(StaticWrapper, ):
         offset: int | None = None,
         strides: Iterable[int, ...] | None = None,
         order: str | None = None,
+        override: bool = False,
+        *,
+        load_only: bool = False,
     ) -> None:
         """Constructs this object.
 
@@ -175,27 +187,62 @@ class SharedArray(StaticWrapper, ):
             offset: The offset of array data in the buffer.
             strides: The strides of data in memory
             order: Row-major (C-style) or column-major (Fortran-style) order.
+            override: Determines if the existing data in a loaded SharedMemory should be replaced with the new data.
+            load_only: Determines if the array should be loaded from the SharedMemory. If True, the array will be loaded
+                from the SharedMemory but not created.
         """
         if a is not None:
-            self.construct_from_array(a, name)
+            self.construct_from_array(a, name, override=override)
         elif shape is not None:
-            self.construct_new_array(shape=shape, name=name, dtype=dtype, offset=offset, strides=strides, order=order)
+            if load_only:
+                self.construct_existing_array(
+                    shape=shape,
+                    name=name,
+                    dtype=dtype,
+                    offset=offset,
+                    strides=strides,
+                    order=order,
+                )
+            else:
+                self.construct_new_array(
+                    shape=shape,
+                    name=name,
+                    dtype=dtype,
+                    offset=offset,
+                    strides=strides,
+                    order=order,
+                )
         elif name is not None:
             raise ValueError("Either an array or the shape must be provided.")
 
-    def construct_from_array(self, a: np.ndarray, name: str | None = None) -> None:
+    def construct_from_array(self, a: np.ndarray, name: str | None = None, override: bool = False) -> None:
         """Constructs this object from a given array. Replaces the values if the SharedMemory already exists.
 
         Args:
             a: The array to set the values this array to.
             name: The name of this SharedMemory.
+            override: Determines if the existing data in a loaded SharedMemory should be replaced with the new data.
         """
         try:
-            self._shared_memory = self.shared_memory_type(name=name)
-        except (FileNotFoundError, ValueError):
             self._shared_memory = self.shared_memory_type(name=name, create=True, size=int(a.nbytes))
-        self._array = np.ndarray(a.shape, dtype=a.dtype, buffer=self._shared_memory.buf)
-        self[:] = a[:]
+        except ValueError as error:
+            if int(a.nbytes) == 0:
+                self._array = np.ndarray(a.shape, dtype=a.dtype)
+                if self._shared_memory is not None:
+                    del self._shared_memory
+            else:
+                raise error
+        except FileExistsError:
+            self._shared_memory = self.shared_memory_type(name=name)
+            self._array = np.ndarray(a.shape, dtype=a.dtype, buffer=self._shared_memory.buf)
+            if override:
+                warn(f"SharedMemory '{name}' already exists. Replacing existing data.", RuntimeWarning)
+                self[:] = a[:]
+            else:
+                warn(f"SharedMemory '{name}' already exists. Loading existing data.", RuntimeWarning)
+        else:
+            self._array = np.ndarray(a.shape, dtype=a.dtype, buffer=self._shared_memory.buf)
+            self[:] = a[:]
 
     def construct_new_array(
         self,
@@ -217,22 +264,37 @@ class SharedArray(StaticWrapper, ):
             order: Row-major (C-style) or column-major (Fortran-style) order.
         """
         try:
-            self._shared_memory = self.shared_memory_type(name=name)
-        except (FileNotFoundError, ValueError):
             self._shared_memory = self.shared_memory_type(
                 name=name,
                 create=True,
                 size=int(np.dtype(dtype).itemsize * np.prod(shape)),
             )
-
-        self._array = np.ndarray(
-            shape,
-            dtype=dtype,
-            buffer=self._shared_memory.buf,
-            offset=offset,
-            strides=strides,
-            order=order,
-        )
+        except ValueError as error:
+            if int(np.dtype(dtype).itemsize * np.prod(shape)) == 0:
+                self._array = np.ndarray(shape, dtype=dtype)
+                if self._shared_memory is not None:
+                    del self._shared_memory
+            else:
+                raise error
+        except FileExistsError:
+            self._shared_memory = self.shared_memory_type(name=name)
+            self._array = np.ndarray(
+                shape,
+                dtype=dtype,
+                buffer=self._shared_memory.buf,
+                offset=offset,
+                strides=strides,
+                order=order,
+            )
+        else:
+            self._array = np.ndarray(
+                shape,
+                dtype=dtype,
+                buffer=self._shared_memory.buf,
+                offset=offset,
+                strides=strides,
+                order=order,
+            )
 
     def construct_existing_array(
         self,
@@ -252,7 +314,6 @@ class SharedArray(StaticWrapper, ):
             offset: The offset of array data in the buffer.
             strides: The strides of data in memory
             order: Row-major (C-style) or column-major (Fortran-style) order.
-            register: Determines if the SharedMemory will be registered to help deallocate it when the process dies.
         """
         self._shared_memory = self.shared_memory_type(name=name)
 
@@ -276,7 +337,8 @@ class SharedArray(StaticWrapper, ):
     # Shared Memory
     def close(self) -> None:
         """Closes access to the shared memory from this instance but does not destroy the shared memory block."""
-        self._shared_memory.close()
+        if self._shared_memory is not None:
+            self._shared_memory.close()
 
     def unlink(self) -> None:
         """Requests that the underlying shared memory block be destroyed.
@@ -284,4 +346,5 @@ class SharedArray(StaticWrapper, ):
         In order to ensure proper cleanup of resources, unlink should be called once (and only once) across all
         processes which have access to the shared memory block.
         """
-        self._shared_memory.unlink()
+        if self._shared_memory is not None:
+            self._shared_memory.unlink()

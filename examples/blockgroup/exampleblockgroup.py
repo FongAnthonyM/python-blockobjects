@@ -73,7 +73,7 @@ class ExampleBlockGroup(BlockGroup):
         self.blocks["generator"] = RNGBlock(shape=shape, evaluation_limit=2, name="generator", will_proxy=will_proxy)
         self.blocks["sum_1"] = SumBlock(name="sum_1", will_proxy=will_proxy)
         self.blocks["sum_2"] = SumBlock(name="sum_2", will_proxy=will_proxy)
-        self.blocks["checker"] = IsEqualBlock(equals_method="unique", name="checker", will_proxy=will_proxy)
+        self.blocks["checker"] = IsEqualBlock(name="checker", will_proxy=will_proxy)
 
     # IO
     def link_inner_io(self, *args: Any, **kwargs: Any) -> None:

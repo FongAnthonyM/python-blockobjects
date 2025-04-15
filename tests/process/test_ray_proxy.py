@@ -3,14 +3,15 @@
 """ test_baseobjects.py
 Test for the baseobjects package.
 """
-# Package Header #
-from src.blockobjects.header import *
-
 # Header #
-__author__ = __author__
-__credits__ = __credits__
-__maintainer__ = __maintainer__
-__email__ = __email__
+__package_name__ = "blockobjects"
+
+__author__ = "Anthony Fong"
+__credits__ = ["Anthony Fong"]
+__copyright__ = "Copyright 2022, Anthony Fong"
+__license__ = "MIT"
+
+__version__ = "0.1.0"
 
 
 # Imports #
@@ -20,14 +21,14 @@ __email__ = __email__
 import pytest
 
 # Local Packages #
-from src.blockobjects.process.ray import context
+from src.blockobjects.process.context.raycontext import RayContext
 from .test_proxy import BaseProxyTest
 
 
 # Definitions #
 # Classes #
 class TestRayProxy(BaseProxyTest):
-    context_type = context
+    context_type = RayContext
 
 
 # Main #
