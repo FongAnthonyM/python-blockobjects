@@ -1,6 +1,8 @@
-""" arbitratingiomanager.py
+"""contextualiomanager.py
 An IO object which maps named inputs to names outputs in a one-to-one manner.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

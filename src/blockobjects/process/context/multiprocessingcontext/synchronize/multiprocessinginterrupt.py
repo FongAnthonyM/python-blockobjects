@@ -1,6 +1,8 @@
-""" multiprocessinginterrupt.py
+"""multiprocessinginterrupt.py
 An MultiProcessingEvent which intended to act interrupt.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

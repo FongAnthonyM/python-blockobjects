@@ -1,6 +1,8 @@
-""" managercontext.py
+"""managercontext.py
 A context which manages multiple contexts and arbitrates its context functionality to a selected context.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -216,4 +218,3 @@ class ManagerContext(BaseProcessingContext):
             exposed=exposed,
             **({"context": self.context} | _kwargs),
         )
-

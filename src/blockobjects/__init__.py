@@ -1,6 +1,8 @@
-""" __init__.py
+"""__init__.py
+Package initialization for blockobjects.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -14,5 +16,3 @@ __version__ = "0.1.0"
 
 # Imports #
 # Local Packages #
-from .blocks import *
-from .io import *

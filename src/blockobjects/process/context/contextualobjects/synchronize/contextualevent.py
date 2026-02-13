@@ -1,6 +1,8 @@
-""" contextualevent.py
+"""contextualevent.py
 An object that wraps an event created by a context object and can switch between multiple contexts.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

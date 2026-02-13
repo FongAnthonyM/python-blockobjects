@@ -1,6 +1,8 @@
-""" eventinterface.py
+"""eventinterface.py
 An interface which outlines the basis for an event.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

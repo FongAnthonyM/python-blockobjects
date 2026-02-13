@@ -1,6 +1,8 @@
-""" contextualobjectinterface.py
+"""contextualobjectinterface.py
 An interface for an object containing a context object which determines its implementation.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

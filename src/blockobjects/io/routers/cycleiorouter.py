@@ -1,6 +1,8 @@
-""" cycleiorouter.py.py
+"""cycleiorouter.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

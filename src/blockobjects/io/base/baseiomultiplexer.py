@@ -1,5 +1,6 @@
-""" baseiomultiplexer.py
-BaseIOMultiplexer sets the get and put methods to be MethodMultiplexer objects which dispatches the get and put
+"""baseiomultiplexer.py
+BaseIOMultiplexer sets the get and put methods to be MethodMultiplexer objects which dispatches the get and put.
+
 methods from collection of methods based on the selected method name. By default, the MethodMultiplexer uses its
 corresponding BaseIOMultiplexer instance as the source of the methods to dispatch.
 
@@ -7,6 +8,7 @@ In the context of IO Objects, this means any BaseIOMultiplexer subclass will hav
 changed to any method during runtime. This allows the subclasses to change how they route IO dynamically, either
 during construction or runtime.
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" test_processdelgate.py
+"""test_processdelagate.py
 Test for the baseobjects package.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

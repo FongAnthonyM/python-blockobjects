@@ -1,6 +1,8 @@
-""" __init__.py
+"""__init__.py
 Queue objects.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -16,4 +18,3 @@ __version__ = "0.1.0"
 # Local Packages #
 from .multiprocessingqueue import MultiProcessingQueue
 from .multiprocessingsimplequeue import MultiProcessingSimpleQueue
-

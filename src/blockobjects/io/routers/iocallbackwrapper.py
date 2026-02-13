@@ -1,6 +1,8 @@
-""" iocallbackwrapper.py.py
+"""iocallbackwrapper.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

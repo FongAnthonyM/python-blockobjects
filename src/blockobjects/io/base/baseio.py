@@ -1,8 +1,10 @@
-""" baseio.py
-BaseIO is an abstract base class which provides a common interface for all IO Objects. It defines the basic structure
+"""baseio.py
+BaseIO is an abstract base class which provides a common interface for all IO Objects. It defines the basic structure.
+
 and common methods that all IO Object classes should implement. While it does not implement any specific behavior, it
 does define some default attributes.
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

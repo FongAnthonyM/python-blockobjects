@@ -1,6 +1,8 @@
-""" ioqueue.py
+"""ioqueue.py
 IOQueue stores values within it using a queue.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

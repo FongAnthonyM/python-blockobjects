@@ -1,6 +1,8 @@
-""" rayevent.py
+"""rayevent.py
 An Event object using Ray.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

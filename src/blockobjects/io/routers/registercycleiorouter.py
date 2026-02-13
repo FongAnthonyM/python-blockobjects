@@ -1,6 +1,8 @@
-""" registercycleiorouter.py.py
+"""registercycleiorouter.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -73,7 +75,7 @@ class RegisterCycleIORouter(IORouter):
         init: bool = True,
         **kwargs: Any,
     ) -> None:
-        # Attributes
+        # Attributes #
         self.get_register = {}
         self.put_register = {}
 

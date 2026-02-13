@@ -1,6 +1,8 @@
-""" lockinterface.py
+"""lockinterface.py
 An interface which outlines the basis for a lock.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

@@ -1,6 +1,8 @@
-""" ioarbitratorwrapper.py
+"""ioarbitratorwrapper.py
 An IO Object which wraps a ProcessArbitrator as an IO Object.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

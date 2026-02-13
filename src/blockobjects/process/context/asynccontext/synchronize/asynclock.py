@@ -1,6 +1,8 @@
-""" asynclock.py
+"""asynclock.py
 A Lock object using Async.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

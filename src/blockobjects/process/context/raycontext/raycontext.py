@@ -1,6 +1,8 @@
-""" context.py.py
+"""raycontext.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -127,4 +129,3 @@ class RayContext(BaseProcessingContext):
 
         self.object_register["proxies"][(str(id(proxy)) if name is None else name)] = proxy
         return proxy
-

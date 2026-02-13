@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" test_blockgroup.py
+"""test_blockgroup.py
 Test for the baseobjects package.
+
 """
-from typing import Any
 
 # Header #
 __package_name__ = "blockobjects"
@@ -15,6 +15,8 @@ __license__ = "MIT"
 
 __version__ = "0.1.0"
 
+
+from typing import Any
 
 # Imports #
 # Standard Libraries #

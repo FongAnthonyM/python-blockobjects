@@ -13,12 +13,12 @@ Here is a list of important resources for contributors:
 - `Code of Conduct`_
 
 .. _MIT license: https://opensource.org/licenses/MIT
-.. _Source Code: https://github.com/fongant/python-blockobjects
+.. _Source Code: https://github.com/AnthonyTechnologies/python-blockobjects
 .. _Documentation: https://python-blockobjects.readthedocs.io/
-.. _Issue Tracker: https://github.com/fongant/python-blockobjects/issues
+.. _Issue Tracker: https://github.com/AnthonyTechnologies/python-blockobjects/issues
 
-How to report a bug
--------------------
+Reporting Bugs
+--------------
 
 Report bugs on the `Issue Tracker`_.
 
@@ -34,44 +34,55 @@ The best way to get your bug fixed is to provide a test case,
 and/or steps to reproduce the issue.
 
 
-How to request a feature
-------------------------
+Requesting Features
+-------------------
 
 Request features on the `Issue Tracker`_.
 
 
-How to set up your development environment
-------------------------------------------
+Development Environment Setup
+------------------------------
 
-You need Python 3.7+ and the following tools:
+You need Python 3.14+ and the following tools:
 
-- Poetry_
 - Nox_
-- nox-poetry_
 
 Install the package with development requirements:
 
 .. code:: console
 
-   $ poetry install
+   $ pip install -e .[dev]
 
-You can now run an interactive Python session,
-or the command-line interface:
+You can now run an interactive Python session:
 
 .. code:: console
 
-   $ poetry run python
-   $ poetry run python-blockobjects
+   $ python
 
-.. _Poetry: https://python-poetry.org/
 .. _Nox: https://nox.thea.codes/
-.. _nox-poetry: https://nox-poetry.readthedocs.io/
 
 
-How to test the project
------------------------
+Project Tools
+-------------
 
-Run the full test suite:
+This project uses several tools to ensure code quality and consistency.
+
+- **Nox**: A flexible test automation tool.
+- **uv**: A fast Python package installer and resolver.
+- **pre-commit**: A framework for managing and maintaining multi-language pre-commit hooks.
+- **mypy**: Optional static typing for Python.
+- **pytest**: The pytest framework makes it easy to write small tests.
+- **coverage**: Code coverage measurement for Python.
+- **typeguard**: Run-time type checker for Python.
+- **xdoctest**: A rewrite of the standard library doctest module.
+- **Sphinx**: Python documentation generator.
+
+Testing the Project
+-------------------
+
+This project uses `Nox`_ for test automation. It orchestrates testing, linting, and documentation building across different environments.
+
+Run the full default test suite (creates new virtual environments):
 
 .. code:: console
 
@@ -83,21 +94,59 @@ List the available Nox sessions:
 
    $ nox --list-sessions
 
-You can also run a specific Nox session.
-For example, invoke the unit test suite like this:
+Nox Sessions
+~~~~~~~~~~~~
+
+The Nox sessions are categorized into two main groups based on how they run:
+
+New Environments
+^^^^^^^^^^^^^^^^
+
+These sessions create isolated virtual environments for each run. This ensures that tests run in a clean, reproducible state with the exact dependencies specified for the project. These are the default sessions.
+
+**Tag:** ``new_venv``
+
+- ``tests``: Run the test suite using pytest.
+- ``mypy``: Run static type checking.
+- ``typeguard``: Run runtime type checking.
+- ``xdoctest``: Run doctests.
+- ``docs-build``: Build the documentation.
+- ``pre-commit``: Run pre-commit hooks.
+- ``coverage``: Produce coverage reports.
+
+Active Environment
+^^^^^^^^^^^^^^^^^^
+
+These sessions run tools in the currently active Python environment. This is useful for testing with different dependencies (e.g., experimental versions) or for faster iteration if you already have valid dependencies installed.
+
+**Tag:** ``active_venv``
+
+- ``tests_active``
+- ``mypy_active``
+- ``typeguard_active``
+- ``xdoctest_active``
+- ``docs-build_active``
+- ``pre-commit_active``
+- ``coverage_active``
+
+Running Specific Sessions
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can run individual sessions by name:
 
 .. code:: console
 
-   $ nox --session=tests
+   $ nox -s tests
 
-Unit tests are located in the ``tests`` directory,
-and are written using the pytest_ testing framework.
+Or run a group of sessions using tags:
 
-.. _pytest: https://pytest.readthedocs.io/
+.. code:: console
 
+   $ nox -t new_venv
+   $ nox -t active_venv
 
-How to submit changes
----------------------
+Submitting Changes
+------------------
 
 Open a `pull request`_ to submit changes to this project.
 
@@ -118,6 +167,6 @@ To run linting and code formatting checks before committing your change, you can
 It is recommended to open an issue before starting work on anything.
 This will allow a chance to talk it over with the owners and validate your approach.
 
-.. _pull request: https://github.com/fongant/python-blockobjects/pulls
+.. _pull request: https://github.com/AnthonyTechnologies/python-blockobjects/pulls
 .. github-only
 .. _Code of Conduct: CODE_OF_CONDUCT.rst

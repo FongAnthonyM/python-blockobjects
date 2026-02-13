@@ -1,5 +1,6 @@
-""" ioforwarder.py
-IOForwarder forwards IO to another IO object. It is essentially a wrapper for other IO Objects, but it can change which
+"""ioforwarder.py
+IOForwarder forwards IO to another IO object. It is essentially a wrapper for other IO Objects, but it can change which.
+
 IO Object it is wrapping at any time. This is useful for changing the routing of the IO data during runtime. The two
 main uses of this type of routing redirection is to either change routing due to state change in the system and/or
 refactor the IO routing to more direct links. IOForwarder is primarily intended to be used to refactor the IO routing as
@@ -8,6 +9,7 @@ While IOForwarder can be used to redirect routing due to state changes, this is 
 track the routing of the data. IORouter should be used for routing redirection instead, because it is designed to handle
 complex routing redirection.
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

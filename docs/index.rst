@@ -2,15 +2,44 @@
    :end-before: github-only
 
 .. _Contributor Guide: contributing.html
-.. _Usage: usage.html
+
+
+Table of Contents
+-----------------
+.. toctree::
+   :maxdepth: 0
+   :titlesonly:
+
+   Overview <overview>
 
 .. toctree::
-   :hidden:
+   :caption: Getting Started
    :maxdepth: 1
 
-   usage
+   installation
+
+.. toctree::
+   :caption: Concepts
+   :maxdepth: 1
+
+.. toctree::
+   :caption: Tutorials and Examples
+   :maxdepth: 1
+
+   tutorials/tutorials
+
+.. toctree::
+   :caption: API Reference
+   :maxdepth: 1
+
    reference
-   contributing
-   Code of Conduct <codeofconduct>
-   License <license>
-   Changelog <https://github.com/fongant/python-blockobjects/releases>
+
+.. toctree::
+   :caption: Contributing
+   :maxdepth: 1
+
+   License <contributing/license>
+   contributing/contributing
+   Code of Conduct <contributing/codeofconduct>
+   contributing/testing
+   Changelog <https://github.com/AnthonyTechnologies/python-blockobjects/releases>

@@ -1,6 +1,8 @@
-""" process.py
+"""process.py
 A wrapper for a multiprocessing Process which mimics multiple run functionality.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

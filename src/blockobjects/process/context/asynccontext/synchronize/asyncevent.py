@@ -1,6 +1,8 @@
-""" asyncevent.py
+"""asyncevent.py
 An Event object using async.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -157,4 +159,3 @@ class AsyncEvent(Event, EventInterface):
             return True
         finally:
             self._waiters.remove(fut)
-

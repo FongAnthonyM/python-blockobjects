@@ -1,6 +1,8 @@
-""" contextuallock.py
+"""contextuallock.py
 An object that wraps a lock created by a context object and can switch between multiple contexts.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

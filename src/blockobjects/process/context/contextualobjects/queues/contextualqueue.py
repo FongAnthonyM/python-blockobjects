@@ -1,6 +1,8 @@
-""" contextualqueue.py
+"""contextualqueue.py
 An object that wraps a queue created by a context object and can switch between multiple context.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

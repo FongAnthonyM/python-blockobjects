@@ -1,6 +1,8 @@
-""" __init__.py
+"""__init__.py
 Objects for managing shared memory.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

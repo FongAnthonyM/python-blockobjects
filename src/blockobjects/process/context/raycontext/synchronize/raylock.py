@@ -1,6 +1,8 @@
-""" raylock.py
+"""raylock.py
 A Lock object using Ray.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

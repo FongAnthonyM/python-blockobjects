@@ -1,6 +1,8 @@
-""" rayqueue.py
+"""rayqueue.py
 Extends the multiprocessing Queue by adding async methods and interrupts for blocking methods.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

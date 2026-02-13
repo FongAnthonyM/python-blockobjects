@@ -1,6 +1,8 @@
-""" arrayreducer.py
+"""arrayreducer.py
 Reduces numpy arrays to shared memory.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

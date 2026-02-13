@@ -1,6 +1,8 @@
-""" sharedarray.py
+"""sharedarray.py
 A wrapper for a numpy ndarray which allocates it in SharedMemory.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

@@ -1,6 +1,8 @@
-""" queueinterface.py
+"""queueinterface.py
 An interface which outlines the basis for an async queue.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

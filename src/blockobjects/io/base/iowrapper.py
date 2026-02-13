@@ -1,6 +1,8 @@
-""" iowrapper.py
+"""iowrapper.py
 An IO Object which wraps other functions or methods as an IO Object.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

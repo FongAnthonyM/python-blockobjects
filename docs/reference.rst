@@ -1,13 +1,14 @@
-Reference
-=========
+API Reference
+=============
 
 .. contents::
     :local:
+    :depth: 2
     :backlinks: none
 
 
-blockobjects.__main__
---------------------
+blockobjects
+---------------------------
 
-.. automodule:: blockobjects.__main__
+.. automodule:: blockobjects
    :members:

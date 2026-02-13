@@ -1,6 +1,8 @@
-""" ioterminus.py
+"""ioterminus.py
 An IO Object which is meant to be the terminus of an IO network/graph.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

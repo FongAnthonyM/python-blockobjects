@@ -1,6 +1,8 @@
-""" sharedmemory.py
+"""sharedmemory.py
 Extends SharedMemory with a reference count and optional registration for unlinking when the process dies.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

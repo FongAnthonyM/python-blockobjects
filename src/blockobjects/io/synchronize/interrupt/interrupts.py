@@ -1,6 +1,8 @@
-""" multiprocessinginterrupt.py
+"""interrupts.py
 A container for several named interrupt.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

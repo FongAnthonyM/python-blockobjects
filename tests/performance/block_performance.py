@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" block_baseobjects.py
+"""block_performance.py
 Test for the baseobjects package.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

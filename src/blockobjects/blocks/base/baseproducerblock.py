@@ -1,6 +1,8 @@
-""" baseblock.py.py
+"""baseproducerblock.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

@@ -1,8 +1,10 @@
-""" iocontextualqueue.py
-IOContextualQueue stores values within it using a queue. It mixes in ContextualQueue to give it dynamic implementation where its
+"""iocontextualqueue.py
+IOContextualQueue stores values within it using a queue. It mixes in ContextualQueue to give it dynamic implementation where its.
+
 implementation depend on which multiprocessing context it is assigned to, giving it the flexibility to be used with
 several multiprocessing frameworks. Additionally, the context can be changed at any time.
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

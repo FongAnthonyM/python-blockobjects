@@ -1,6 +1,8 @@
-""" multiprocessinglock.py
+"""multiprocessinglock.py
 Extends the multiprocessing Lock by adding async methods and interrupts for blocking methods.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

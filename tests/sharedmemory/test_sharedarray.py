@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-""" test_sharedarray.py
+"""test_sharedarray.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

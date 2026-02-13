@@ -1,6 +1,8 @@
-""" multiprocessingcontext.py
+"""multiprocessingcontext.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

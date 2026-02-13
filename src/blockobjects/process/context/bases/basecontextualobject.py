@@ -1,6 +1,8 @@
-""" basecontextualobject.py.py
+"""basecontextualobject.py
 A base class for an object containing a context object which determines its implementation.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

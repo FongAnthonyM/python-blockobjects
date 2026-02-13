@@ -1,6 +1,8 @@
-""" processarbitrator.py
+"""processarbitrator.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

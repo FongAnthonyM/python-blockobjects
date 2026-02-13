@@ -1,6 +1,8 @@
-""" identifieditem.py
+"""identifieditem.py
 A class which represents an item with its associated identifiers.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

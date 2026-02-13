@@ -1,6 +1,8 @@
-""" rayproxy.py
+"""rayproxy.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -51,7 +53,7 @@ class RayProxy(ProxyInterface):
     _unexposed_: ClassVar[set] = set()
     exposed: ClassVar[set]
 
-    # Class Methods
+    # Class Methods #
     @classmethod
     def get_exposed(cls, target_cls: type, exposed: Iterable[str] | None = None) -> set[str]:
         public_methods = set(iter_public_method_names(target_cls))

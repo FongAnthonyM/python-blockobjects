@@ -1,6 +1,8 @@
-""" contextualsimplequeue.py
+"""multiprocessingsimplequeue.py
 Extends the multiprocessing SimpleQueue by adding async methods and interrupts for blocking methods.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

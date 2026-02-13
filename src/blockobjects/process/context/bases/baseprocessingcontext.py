@@ -1,6 +1,8 @@
-""" baseprocessingcontext.py
+"""baseprocessingcontext.py
 A multiprocessing object manager, managing the implementation, creation, and dispatch of multiprocessing objects.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

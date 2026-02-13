@@ -1,6 +1,8 @@
-""" proxyinterface.py
+"""proxyinterface.py
 An interface which outlines the basis for a Proxy object.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

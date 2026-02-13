@@ -1,6 +1,8 @@
-""" __init__.py
+"""__init__.py
 Queue objects.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

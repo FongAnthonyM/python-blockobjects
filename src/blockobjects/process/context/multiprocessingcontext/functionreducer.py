@@ -1,6 +1,8 @@
-""" functionreducer.py
+"""functionreducer.py
 Reduces a callable serialized object containing the build function and its arguments.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

@@ -1,7 +1,7 @@
-""" iorouter.py
+"""iorouter.py
 An IO object which maps inputs to outputs.
+
 """
-from h5py.h5pl import append
 
 # Header #
 __package_name__ = "blockobjects"
@@ -13,6 +13,8 @@ __license__ = "MIT"
 
 __version__ = "0.1.0"
 
+
+from h5py.h5pl import append
 
 # Imports #
 # Standard Libraries #
@@ -160,7 +162,7 @@ class IORouter(BaseIOMultiplexer, BaseCallbackRouting, BaseReducible):
     scheduled_listener_links: set[tuple[int, str, int, str]]
     listeners: dict[str, Task]
 
-    # Properties
+    # Properties #
     @property
     def parent(self) -> "IORouter":
         return self._parent if self._parent is None else self._parent()

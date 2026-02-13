@@ -1,6 +1,8 @@
-""" __init__.py
+"""__init__.py
 Interfaces for multiprocessing objects.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

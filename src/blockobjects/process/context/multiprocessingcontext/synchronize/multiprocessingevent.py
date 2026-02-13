@@ -1,6 +1,8 @@
-""" multiprocessingevent.py
+"""multiprocessingevent.py
 Extends the multiprocessing Event by adding async methods and interrupts for blocking methods.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

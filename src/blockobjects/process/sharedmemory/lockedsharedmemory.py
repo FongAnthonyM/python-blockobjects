@@ -1,6 +1,8 @@
-""" lockedsharedmemory.py
+"""lockedsharedmemory.py
 SharedMemory with a Lock to ensure it is thread and process safe.
+
 """
+
 # Header #
 __package_name__ = "blockobjects"
 

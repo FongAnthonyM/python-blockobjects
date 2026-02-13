@@ -1,6 +1,8 @@
-""" multiprocessingproxy.py
+"""multiprocessingproxy.py
+Summary.
 
 """
+
 # Header #
 __package_name__ = "blockobjects"
 
@@ -305,4 +307,3 @@ def AutoMultiprocessingProxy(token, serializer, manager=None, authkey=None, expo
 
 # Overrides #
 multiprocessing.connection.SocketClient = SocketClient
-
